@@ -1,0 +1,2306 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 地圖繪畫分解與圖層提取系統</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons (用於現代感圖示) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;700&display=swap');
+        body {
+            font-family: 'Inter', 'Noto Sans TC', sans-serif;
+        }
+        /* 美化與加寬滾動條，確保滑鼠與觸控操作好點選 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 9999px;
+            border: 2px solid #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        /* 載入動畫 */
+        @keyframes scan {
+            0% { transform: translateY(-100%); }
+            50% { transform: translateY(100%); }
+            100% { transform: translateY(-100%); }
+        }
+        .scanner-line {
+            animation: scan 3s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen max-h-screen flex flex-col overflow-hidden">
+
+    <!-- 頂部導覽列 -->
+    <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10 shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="bg-indigo-600 p-2 rounded-xl text-white shadow-md shadow-indigo-100">
+                <i data-lucide="map" class="w-6 h-6"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold text-slate-900 leading-tight">AI CartoSplitter</h1>
+                <p class="text-xs text-slate-500">智慧地圖色彩分解與繪圖輔助系統</p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span class="flex items-center text-xs bg-emerald-50 text-emerald-700 font-medium px-2.5 py-1 rounded-full border border-emerald-200">
+                <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full mr-1.5 animate-pulse"></span>
+                Web-AI 離線計算模式
+            </span>
+        </div>
+    </header>
+
+    <!-- 主要工作區 -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- 左側：操作面板 -->
+        <aside class="w-[420px] bg-white border-r border-slate-200 flex flex-col h-full shrink-0">
+            <!-- 頁籤控制 -->
+            <div class="flex border-b border-slate-100 p-2 bg-slate-50/50 shrink-0">
+                <button id="tab-upload-btn" class="flex-1 py-2 px-3 text-sm font-semibold text-indigo-600 border-b-2 border-indigo-600 flex items-center justify-center gap-2">
+                    <i data-lucide="upload-cloud" class="w-4 h-4"></i>地圖匯入
+                </button>
+                <button id="tab-layers-btn" class="flex-1 py-2 px-3 text-sm font-medium text-slate-500 hover:text-slate-800 flex items-center justify-center gap-2 transition-colors">
+                    <i data-lucide="layers" class="w-4 h-4"></i>圖層管理
+                </button>
+                <button id="tab-draw-btn" class="flex-1 py-2 px-3 text-sm font-medium text-slate-500 hover:text-slate-800 flex items-center justify-center gap-2 transition-colors">
+                    <i data-lucide="paintbrush" class="w-4 h-4"></i>手繪校正
+                </button>
+            </div>
+
+            <!-- 面板內容區域 (可滾動，加上 min-h-0 防止彈性盒模型在不同瀏覽器下高度撐爆) -->
+            <div class="flex-1 overflow-y-auto p-5 space-y-6 min-h-0">
+                
+                <!-- 1. 地圖匯入與 AI 解析設定 -->
+                <div id="panel-upload" class="space-y-5">
+                    <div class="space-y-2">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400">步驟 1: 匯入地圖源</label>
+                        <!-- 拖曳上傳區域 -->
+                        <div id="drop-zone" class="border-2 border-dashed border-slate-200 hover:border-indigo-400 rounded-2xl p-6 text-center cursor-pointer transition-all bg-slate-50 hover:bg-indigo-50/20 group">
+                            <input type="file" id="map-file" class="hidden" accept="image/*">
+                            <i data-lucide="image-plus" class="w-10 h-10 mx-auto text-slate-400 group-hover:text-indigo-500 mb-3 transition-colors"></i>
+                            <p class="text-sm font-semibold text-slate-700">拖曳地圖圖片至此處</p>
+                            <p class="text-xs text-slate-400 mt-1">支援 PNG, JPG, WEBP 格式</p>
+                            <div class="mt-4 flex justify-center">
+                                <span class="bg-white border border-slate-200 text-xs text-indigo-600 font-semibold px-3 py-1.5 rounded-lg shadow-sm group-hover:shadow transition-all">選擇本機檔案</span>
+                            </div>
+                        </div>
+
+                        <!-- 快速載入範例地圖 -->
+                        <div class="flex items-center justify-between pt-2">
+                            <span class="text-xs text-slate-500">沒有地圖？</span>
+                            <button id="load-sample-btn" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1">
+                                <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>載入精美示範地圖
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- AI分解控制參數 -->
+                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500">步驟 2: AI 分解與歸納參數</label>
+                        
+                        <!-- 提示：全元素分配模式 -->
+                        <div class="p-2.5 bg-indigo-50/60 rounded-lg border border-indigo-100 text-[11px] text-indigo-700 space-y-1">
+                            <div class="font-bold flex items-center gap-1">
+                                <i data-lucide="shield-check" class="w-3.5 h-3.5"></i> 100% 全元素歸納系統啟動
+                            </div>
+                            <p>地圖中的所有像素均會分配至最接近的分類色圖層中，完全不留邊線死角或雜訊透明點。</p>
+                        </div>
+
+                        <!-- 提示2：視覺辨識強化 -->
+                        <div class="p-2.5 bg-emerald-50 text-[11px] text-emerald-800 rounded-lg border border-emerald-200">
+                            <div class="font-bold flex items-center gap-1">
+                                <i data-lucide="eye" class="w-3.5 h-3.5"></i> 灰色／褐色與淺藍／淺綠分離算法
+                            </div>
+                            <p class="mt-1">系統已導入 HSL 色相感知放大技術與特別色區分類別判定，防止色度接近的相異色區被錯誤歸類。</p>
+                        </div>
+
+                        <!-- 邊線清晰度 -->
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-xs font-medium text-slate-700">
+                                <span>背景定位邊線不透明度</span>
+                                <span id="edge-opacity-val">70%</span>
+                            </div>
+                            <input type="range" id="edge-opacity-slider" min="0" max="100" value="70" class="w-full accent-indigo-600 cursor-pointer">
+                            <span class="text-[10px] text-slate-400 block">各圖層中疊加的整體定位黑白邊線強度</span>
+                        </div>
+
+                        <!-- 預估圖層數 -->
+                        <div class="space-y-2">
+                            <span class="text-xs font-medium text-slate-700 block">手動指定 / 點擊畫布吸取顏色</span>
+                            <div class="flex items-center gap-2">
+                                <button id="pipette-btn" class="flex-1 py-2 px-3 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-slate-50 transition-colors">
+                                    <i data-lucide="pipette" class="w-3.5 h-3.5 text-indigo-600"></i>點擊畫面吸取新色塊
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 開始分解按鈕 -->
+                        <button id="run-ai-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-xl shadow-md shadow-indigo-100 flex items-center justify-center gap-2 transition-all disabled:bg-slate-300 disabled:shadow-none" disabled>
+                            <i data-lucide="wand2" class="w-4 h-4"></i>
+                            <span>執行地圖分層</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 2. 圖層管理面板 -->
+                <div id="panel-layers" class="space-y-4 hidden">
+                    <div class="flex justify-between items-center">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400">地圖分解圖層 (Layers)</label>
+                        <div class="flex items-center gap-3">
+                            <!-- 圖層選取合併控制開關 -->
+                            <button id="toggle-merge-mode-btn" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 transition-all disabled:opacity-40 disabled:cursor-not-allowed" title="開啟合併選取圖層模式" disabled>
+                                <i data-lucide="git-merge" class="w-3.5 h-3.5"></i>合併圖層
+                            </button>
+                            <button id="reset-layers-btn" class="text-xs text-red-500 hover:text-red-700 font-medium flex items-center gap-1">
+                                <i data-lucide="rotate-ccw" class="w-3 h-3"></i>重設圖層
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 貼在圖層列表上方的合併工具控制條 -->
+                    <div id="merge-action-bar" class="bg-indigo-50 border border-indigo-100 p-3 rounded-xl flex items-center justify-between hidden transition-all">
+                        <span class="text-xs font-semibold text-indigo-700">已選取 <span id="selected-count" class="font-bold underline">0</span> 個圖層</span>
+                        <div class="flex gap-2">
+                            <button id="execute-merge-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all" disabled>確認合併</button>
+                            <button id="cancel-merge-btn" class="bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-[11px] font-medium px-3 py-1.5 rounded-lg shadow-sm transition-colors">取消</button>
+                        </div>
+                    </div>
+
+                    <!-- 圖層列表容器 -->
+                    <div id="layers-list-container" class="space-y-3">
+                        <div class="text-center py-8 text-slate-400 text-xs">
+                            <i data-lucide="layers-3" class="w-8 h-8 mx-auto mb-2 stroke-1"></i>
+                            尚未進行 AI 分析。請先匯入地圖並執行分層。
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. 手繪標註工具面板 -->
+                <div id="panel-draw" class="space-y-5 hidden">
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400">繪圖輔助工具</label>
+                    
+                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
+                        <!-- 工具選擇 -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <button id="tool-brush" class="py-2.5 px-3 bg-indigo-50 border border-indigo-200 text-indigo-700 font-medium rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors">
+                                <i data-lucide="pencil" class="w-4 h-4"></i>畫筆模式
+                            </button>
+                            <button id="tool-eraser" class="py-2.5 px-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors">
+                                <i data-lucide="eraser" class="w-4 h-4"></i>橡皮擦模式
+                            </button>
+                        </div>
+
+                        <!-- 筆刷大小 -->
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-xs font-medium text-slate-700">
+                                <span>筆刷粗細 (Size)</span>
+                                <span id="brush-size-val">8px</span>
+                            </div>
+                            <input type="range" id="brush-size-slider" min="1" max="50" value="8" class="w-full accent-indigo-600 cursor-pointer">
+                        </div>
+
+                        <!-- 筆刷不透明度 -->
+                        <div class="space-y-1">
+                            <div class="flex justify-between text-xs font-medium text-slate-700">
+                                <span>筆刷不透明度 (Opacity)</span>
+                                <span id="brush-opacity-val">100%</span>
+                            </div>
+                            <input type="range" id="brush-opacity-slider" min="10" max="100" value="100" class="w-full accent-indigo-600 cursor-pointer">
+                        </div>
+
+                        <!-- 畫筆色彩 -->
+                        <div class="space-y-2">
+                            <span class="text-xs font-medium text-slate-700 block">畫筆色彩</span>
+                            <div class="flex items-center gap-3">
+                                <input type="color" id="brush-color" value="#4f46e5" class="w-10 h-10 rounded-lg cursor-pointer border-0 bg-transparent">
+                                <div class="flex-1 grid grid-cols-5 gap-1" id="preset-colors">
+                                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-red-500" data-color="#ef4444"></button>
+                                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-emerald-500" data-color="#10b981"></button>
+                                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-blue-500" data-color="#3b82f6"></button>
+                                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-amber-500" data-color="#f59e0b"></button>
+                                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-stone-800" data-color="#292524"></button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 動作 -->
+                        <div class="flex gap-2 pt-2">
+                            <button id="clear-canvas-draw-btn" class="flex-1 py-2 px-3 bg-white hover:bg-red-50 border border-slate-200 hover:border-red-200 text-slate-600 hover:text-red-600 rounded-lg text-xs font-medium flex items-center justify-center gap-1 transition-colors">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>清除目前手繪
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- 底部動作面板 -->
+            <div class="p-4 border-t border-slate-200 bg-slate-50 flex gap-2 shrink-0">
+                <button id="download-composite-btn" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1.5 shadow transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <i data-lucide="download" class="w-4 h-4"></i>匯出複合成果
+                </button>
+                <button id="save-project-btn" class="py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold shadow-sm transition-colors flex items-center gap-1">
+                    <i data-lucide="folder-heart" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </aside>
+
+        <!-- 右側：大畫布展示區 (調整為 overflow-hidden 避免與自訂 zoom/pan 發生滾動衝突) -->
+        <main class="flex-1 bg-slate-100 flex flex-col overflow-hidden relative">
+            
+            <!-- 畫布上方控制條 -->
+            <div class="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between z-10 shrink-0">
+                <div class="flex items-center space-x-4 text-xs font-medium text-slate-500">
+                    <span id="canvas-status" class="flex items-center gap-1 text-slate-600">
+                        <i data-lucide="info" class="w-3.5 h-3.5"></i>
+                        請載入地圖圖片以開始分解
+                    </span>
+                    <span id="image-dimensions" class="border-l border-slate-200 pl-4 hidden">尺寸: -- x --</span>
+                </div>
+                <!-- 縮放與視角 -->
+                <div class="flex items-center space-x-2">
+                    <button id="zoom-out-btn" class="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg transition-colors">
+                        <i data-lucide="zoom-out" class="w-4 h-4"></i>
+                    </button>
+                    <span id="zoom-level" class="text-xs font-semibold text-slate-700 w-12 text-center">100%</span>
+                    <button id="zoom-in-btn" class="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg transition-colors">
+                        <i data-lucide="zoom-in" class="w-4 h-4"></i>
+                    </button>
+                    <button id="zoom-fit-btn" class="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg transition-colors" title="最適大小">
+                        <i data-lucide="maximize" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Canvas 容器區 (將 overflow-auto 升級為 overflow-hidden 確保 zoom & drag 的絲滑感受) -->
+            <div id="canvas-viewport" class="flex-1 overflow-hidden p-8 flex items-center justify-center relative cursor-grab active:cursor-grabbing">
+                
+                <!-- 運算中遮罩 -->
+                <div id="ai-loading-overlay" class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-20 flex flex-col items-center justify-center text-white opacity-0 pointer-events-none transition-opacity duration-300">
+                    <div class="bg-white text-slate-900 p-8 rounded-2xl shadow-2xl max-w-sm w-full text-center relative overflow-hidden">
+                        <!-- 進度條動畫 -->
+                        <div class="absolute top-0 left-0 right-0 h-1 bg-indigo-100 overflow-hidden">
+                            <div class="h-full bg-indigo-600 w-1/3 rounded-full animate-infinite animate-pulse" id="progress-bar" style="width: 0%;"></div>
+                        </div>
+                        
+                        <div class="bg-indigo-50 text-indigo-600 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4 animate-bounce">
+                            <i data-lucide="cpu" class="w-8 h-8"></i>
+                        </div>
+                        <h3 class="text-lg font-bold">AI 正在分解地圖圖層...</h3>
+                        <p class="text-xs text-slate-500 mt-2">正在辨識色彩區塊並提取定位邊線。這需要幾秒鐘的時間...</p>
+                        <div id="ai-progress-text" class="text-xs text-indigo-600 font-bold mt-4">已完成: 0%</div>
+                    </div>
+                </div>
+
+                <!-- 空狀態提示 -->
+                <div id="empty-canvas-state" class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 z-10 pointer-events-none p-6">
+                    <div class="bg-white border border-slate-200 rounded-2xl p-8 max-w-md text-center shadow-lg pointer-events-auto">
+                        <div class="bg-indigo-50 p-4 rounded-2xl w-16 h-16 flex items-center justify-center mx-auto mb-4 text-indigo-600">
+                            <i data-lucide="map-pin" class="w-8 h-8"></i>
+                        </div>
+                        <h3 class="text-lg font-bold text-slate-800 mb-2">繪畫分解工作區</h3>
+                        <p class="text-sm text-slate-500 mb-6 leading-relaxed">上傳一份地圖圖片，AI 將自動辨識不同的色塊區域、道路、河川，並完美抽取並保留原有文字與黑白墨線，利於高階繪圖與教學對照。</p>
+                        <div class="flex justify-center gap-3">
+                            <button id="empty-upload-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-2 px-4 rounded-lg shadow-sm transition-colors">上傳新地圖</button>
+                            <button id="empty-sample-btn" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold py-2 px-4 rounded-lg transition-colors">使用範例地圖</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 畫布主要容器 -->
+                <div id="canvas-container" class="relative shadow-2xl rounded-lg overflow-hidden bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:16px_16px] bg-slate-50 transition-transform origin-center scale-100 hidden flex-shrink-0">
+                    <!-- 最底層：原始地圖/底圖 -->
+                    <canvas id="base-canvas" class="absolute inset-0 pointer-events-none"></canvas>
+                    <!-- 中間層：AI 提取 of 圖層疊加（動態產生） -->
+                    <div id="layers-render-stack" class="absolute inset-0 pointer-events-none"></div>
+                    <!-- 最上層：手繪標註層 -->
+                    <canvas id="drawing-canvas" class="absolute inset-0 z-10"></canvas>
+                </div>
+
+            </div>
+
+            <!-- 底端狀態說明 -->
+            <footer class="bg-white border-t border-slate-200 px-6 py-2.5 flex items-center justify-between text-xs text-slate-400 shrink-0">
+                <span class="flex items-center gap-1">
+                    <i data-lucide="mouse-pointer-click" class="w-3.5 h-3.5"></i>
+                    提示：可以透過滑鼠滾輪縮放畫布，拖曳畫布空白處來移動視角。
+                </span>
+                <span>v1.6.0 Pro Color-Fidelity Build</span>
+            </footer>
+        </main>
+    </div>
+
+    <!-- 專案存檔成功模態框 -->
+    <div id="modal-saved" class="fixed inset-0 bg-slate-900/30 backdrop-blur-xs flex items-center justify-center z-50 opacity-0 pointer-events-none transition-all duration-300">
+        <div class="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full text-center">
+            <div class="bg-emerald-50 text-emerald-500 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="check-circle-2" class="w-6 h-6"></i>
+            </div>
+            <h4 class="text-base font-bold text-slate-800">專案儲存成功</h4>
+            <p class="text-xs text-slate-500 mt-1">您目前的圖層劃分與繪圖標註已暫存在您的瀏覽器快取中。</p>
+            <button id="modal-close-btn" class="mt-4 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-xs transition-colors">好，我知道了</button>
+        </div>
+    </div>
+
+    <!-- 圖層合併名稱輸入自訂模態框 -->
+    <div id="modal-merge" class="fixed inset-0 bg-slate-900/30 backdrop-blur-xs flex items-center justify-center z-50 opacity-0 pointer-events-none transition-all duration-300">
+        <div class="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full space-y-4">
+            <div class="bg-indigo-50 text-indigo-600 w-12 h-12 rounded-full flex items-center justify-center mx-auto">
+                <i data-lucide="git-merge" class="w-6 h-6"></i>
+            </div>
+            <div class="text-center">
+                <h4 class="text-base font-bold text-slate-800">合併圖層設定</h4>
+                <p class="text-xs text-slate-500 mt-1">請為合併後的新圖層命名。合併後，原有的圖層將會被取代並整合。</p>
+            </div>
+            <div class="space-y-1">
+                <label class="block text-xs font-semibold text-slate-500">自定義圖層名稱</label>
+                <input type="text" id="merge-layer-name-input" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent" placeholder="例如：自訂合併圖層">
+            </div>
+            <div class="flex gap-2 pt-2">
+                <button id="modal-merge-confirm-btn" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-xs transition-colors">確認合併</button>
+                <button id="modal-merge-cancel-btn" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 rounded-lg text-xs transition-colors">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JS 邏輯代碼 -->
+    <script>
+        // 核心狀態管理
+        const state = {
+            imageLoaded: false,
+            originalImage: null, // Image 物件
+            imageWidth: 0,
+            imageHeight: 0,
+            zoom: 1.0,
+            panX: 0,
+            panY: 0,
+            isDraggingViewport: false,
+            startX: 0,
+            startY: 0,
+            
+            // 圖像資料快取
+            originalImgData: null,
+            edgeImgData: null,  // 邊線圖層（黑白邊界）
+            
+            // AI 分解圖層
+            layers: [], // 陣列物件 { id, name, color, colorRGB, opacity, visible, renderAsSolid, canvas, ctx }
+            selectedColorRGBs: [], // 初始留空，每次載入新地圖時動態且乾淨地重新檢測，徹底避免舊地圖殘留色彩干擾
+            
+            // 繪圖設定
+            currentTool: 'brush', // 'brush', 'eraser'
+            brushColor: '#4f46e5',
+            brushSize: 8,
+            brushOpacity: 1.0,
+            isDrawing: false,
+            
+            // 模式切換
+            activeTab: 'upload', // 'upload', 'layers', 'draw'
+            isPipetteActive: false,
+
+            // 🌟 合併選取圖層模式狀態
+            isMergeModeActive: false,
+            selectedLayerIdsForMerge: []
+        };
+
+        // DOM 元素引用
+        const el = {
+            mapFile: document.getElementById('map-file'),
+            dropZone: document.getElementById('drop-zone'),
+            loadSampleBtn: document.getElementById('load-sample-btn'),
+            emptyUploadBtn: document.getElementById('empty-upload-btn'),
+            emptySampleBtn: document.getElementById('empty-sample-btn'),
+            runAiBtn: document.getElementById('run-ai-btn'),
+            resetLayersBtn: document.getElementById('reset-layers-btn'),
+            downloadCompositeBtn: document.getElementById('download-composite-btn'),
+            saveProjectBtn: document.getElementById('save-project-btn'),
+            
+            // 滑桿與參數 (注意: toleranceSlider 已經在 HTML 被安全置換，改用安全查詢)
+            toleranceSlider: document.getElementById('tolerance-slider'),
+            toleranceVal: document.getElementById('tolerance-val'),
+            edgeOpacitySlider: document.getElementById('edge-opacity-slider'),
+            edgeOpacityVal: document.getElementById('edge-opacity-val'),
+            pipetteBtn: document.getElementById('pipette-btn'),
+            
+            // 標籤頁
+            tabUploadBtn: document.getElementById('tab-upload-btn'),
+            tabLayersBtn: document.getElementById('tab-layers-btn'),
+            tabDrawBtn: document.getElementById('tab-draw-btn'),
+            panelUpload: document.getElementById('panel-upload'),
+            panelLayers: document.getElementById('panel-layers'),
+            panelDraw: document.getElementById('panel-draw'),
+            
+            // 繪圖控制
+            toolBrush: document.getElementById('tool-brush'),
+            toolEraser: document.getElementById('tool-eraser'),
+            brushSizeSlider: document.getElementById('brush-size-slider'),
+            brushSizeVal: document.getElementById('brush-size-val'),
+            brushOpacitySlider: document.getElementById('brush-opacity-slider'),
+            brushOpacityVal: document.getElementById('brush-opacity-val'),
+            brushColor: document.getElementById('brush-color'),
+            presetColors: document.getElementById('preset-colors'),
+            clearCanvasDrawBtn: document.getElementById('clear-canvas-draw-btn'),
+            
+            // 畫布相關
+            canvasViewport: document.getElementById('canvas-viewport'),
+            canvasContainer: document.getElementById('canvas-container'),
+            baseCanvas: document.getElementById('base-canvas'),
+            drawingCanvas: document.getElementById('drawing-canvas'),
+            layersRenderStack: document.getElementById('layers-render-stack'),
+            emptyCanvasState: document.getElementById('empty-canvas-state'),
+            aiLoadingOverlay: document.getElementById('ai-loading-overlay'),
+            aiProgressText: document.getElementById('ai-progress-text'),
+            progressBar: document.getElementById('progress-bar'),
+            
+            // 畫布輔助
+            canvasStatus: document.getElementById('canvas-status'),
+            imageDimensions: document.getElementById('image-dimensions'),
+            zoomLevel: document.getElementById('zoom-level'),
+            zoomInBtn: document.getElementById('zoom-in-btn'),
+            zoomOutBtn: document.getElementById('zoom-out-btn'),
+            zoomFitBtn: document.getElementById('zoom-fit-btn'),
+            
+            // 列表
+            layersListContainer: document.getElementById('layers-list-container'),
+            
+            // 模態框
+            modalSaved: document.getElementById('modal-saved'),
+            modalCloseBtn: document.getElementById('modal-close-btn'),
+
+            // 🌟 合併控制 DOM 緩存
+            toggleMergeModeBtn: document.getElementById('toggle-merge-mode-btn'),
+            mergeActionBar: document.getElementById('merge-action-bar'),
+            selectedCount: document.getElementById('selected-count'),
+            executeMergeBtn: document.getElementById('execute-merge-btn'),
+            cancelMergeBtn: document.getElementById('cancel-merge-btn'),
+            modalMerge: document.getElementById('modal-merge'),
+            mergeLayerNameInput: document.getElementById('merge-layer-name-input'),
+            modalMergeConfirmBtn: document.getElementById('modal-merge-confirm-btn'),
+            modalMergeCancelBtn: document.getElementById('modal-merge-cancel-btn')
+        };
+
+        // 初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            setupEventListeners();
+            resetViewport();
+        });
+
+        // 監聽視窗調整以維持完整呈現
+        window.addEventListener('resize', () => {
+            if (state.imageLoaded) {
+                zoomToFit();
+            }
+        });
+
+        // 綁定所有監聽器
+        function setupEventListeners() {
+            // Tab 切換
+            el.tabUploadBtn.addEventListener('click', () => switchTab('upload'));
+            el.tabLayersBtn.addEventListener('click', () => switchTab('layers'));
+            el.tabDrawBtn.addEventListener('click', () => switchTab('draw'));
+
+            // 檔案匯入
+            el.dropZone.addEventListener('click', () => el.mapFile.click());
+            el.mapFile.addEventListener('change', handleFileSelect);
+            el.emptyUploadBtn.addEventListener('click', () => el.mapFile.click());
+            
+            // 拖曳上傳效果
+            el.dropZone.addEventListener('dragover', (e) => { e.preventDefault(); el.dropZone.classList.add('border-indigo-500', 'bg-indigo-50/30'); });
+            el.dropZone.addEventListener('dragleave', () => { el.dropZone.classList.remove('border-indigo-500', 'bg-indigo-50/30'); });
+            el.dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                el.dropZone.classList.remove('border-indigo-500', 'bg-indigo-50/30');
+                if (e.dataTransfer.files.length) {
+                    el.mapFile.files = e.dataTransfer.files;
+                    handleFileSelect();
+                }
+            });
+
+            // 範例載入
+            el.loadSampleBtn.addEventListener('click', loadSampleMap);
+            el.emptySampleBtn.addEventListener('click', loadSampleMap);
+
+            // 滑桿與參數即時更新
+            if (el.toleranceSlider) {
+                el.toleranceSlider.addEventListener('input', (e) => {
+                    if (el.toleranceVal) el.toleranceVal.innerText = e.target.value;
+                });
+            }
+            
+            el.edgeOpacitySlider.addEventListener('input', (e) => {
+                el.edgeOpacityVal.innerText = e.target.value + '%';
+                updateLayersRender();
+            });
+
+            // AI 觸發
+            el.runAiBtn.addEventListener('click', runMapDecomposition);
+            el.resetLayersBtn.addEventListener('click', resetDecomposition);
+
+            // 滴管取色工具
+            el.pipetteBtn.addEventListener('click', togglePipette);
+
+            // 畫布縮放移動
+            el.zoomInBtn.addEventListener('click', () => adjustZoom(0.1));
+            el.zoomOutBtn.addEventListener('click', () => adjustZoom(-0.1));
+            el.zoomFitBtn.addEventListener('click', zoomToFit);
+            el.canvasViewport.addEventListener('wheel', handleCanvasWheel, { passive: false });
+            el.canvasViewport.addEventListener('mousedown', handleViewportMouseDown);
+            window.addEventListener('mousemove', handleViewportMouseMove);
+            window.addEventListener('mouseup', handleViewportMouseUp);
+
+            // 手繪標註工具
+            el.toolBrush.addEventListener('click', () => setDrawTool('brush'));
+            el.toolEraser.addEventListener('click', () => setDrawTool('eraser'));
+            el.brushSizeSlider.addEventListener('input', (e) => {
+                state.brushSize = parseInt(e.target.value);
+                el.brushSizeVal.innerText = state.brushSize + 'px';
+            });
+            el.brushOpacitySlider.addEventListener('input', (e) => {
+                state.brushOpacity = parseInt(e.target.value) / 100;
+                el.brushOpacityVal.innerText = e.target.value + '%';
+            });
+            el.brushColor.addEventListener('input', (e) => {
+                state.brushColor = e.target.value;
+            });
+            
+            // 預設顏色點擊
+            resetPresetColorsUI();
+
+            // 手繪動作
+            el.clearCanvasDrawBtn.addEventListener('click', clearHandDrawing);
+
+            // 手繪畫布事件 (支援點擊與拖曳繪圖)
+            el.drawingCanvas.addEventListener('mousedown', startDrawing);
+            el.drawingCanvas.addEventListener('mousemove', draw);
+            window.addEventListener('mouseup', stopDrawing);
+
+            // 支援觸控事件
+            el.drawingCanvas.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    const touch = e.touches[0];
+                    const rect = el.drawingCanvas.getBoundingClientRect();
+                    // 模擬滑鼠
+                    const mouseEvent = new MouseEvent('mousedown', {
+                        clientX: touch.clientX,
+                        clientY: touch.clientY
+                    });
+                    el.drawingCanvas.dispatchEvent(mouseEvent);
+                }
+            }, { passive: true });
+
+            el.drawingCanvas.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 1) {
+                    const touch = e.touches[0];
+                    const mouseEvent = new MouseEvent('mousemove', {
+                        clientX: touch.clientX,
+                        clientY: touch.clientY
+                    });
+                    el.drawingCanvas.dispatchEvent(mouseEvent);
+                }
+            }, { passive: true });
+
+            window.addEventListener('mouseup', stopDrawing);
+
+            // 專案動作
+            el.downloadCompositeBtn.addEventListener('click', downloadCompositeResult);
+            el.saveProjectBtn.addEventListener('click', saveProjectToLocal);
+            el.modalCloseBtn.addEventListener('click', () => {
+                el.modalSaved.classList.add('opacity-0', 'pointer-events-none');
+            });
+
+            // 🌟 合併選取圖層功能綁定
+            el.toggleMergeModeBtn.addEventListener('click', toggleMergeMode);
+            el.cancelMergeBtn.addEventListener('click', () => {
+                state.isMergeModeActive = false;
+                state.selectedLayerIdsForMerge = [];
+                el.mergeActionBar.classList.add('hidden');
+                el.toggleMergeModeBtn.classList.remove('bg-indigo-100', 'text-indigo-800', 'px-2', 'py-1', 'rounded-lg');
+                renderLayersPanel();
+            });
+            el.executeMergeBtn.addEventListener('click', () => {
+                if (state.selectedLayerIdsForMerge.length < 2) return;
+                // 自動生成精美合併建議名稱
+                const selectedLayers = state.layers.filter(l => state.selectedLayerIdsForMerge.includes(l.id));
+                const suggestedNames = selectedLayers.map(l => l.name.split(' ')[0]); // 取第一個字眼
+                el.mergeLayerNameInput.value = suggestedNames.join(' + ') + ' 合併圖層';
+                
+                el.modalMerge.classList.remove('opacity-0', 'pointer-events-none');
+                el.mergeLayerNameInput.focus();
+                el.mergeLayerNameInput.select();
+            });
+            el.modalMergeCancelBtn.addEventListener('click', () => {
+                el.modalMerge.classList.add('opacity-0', 'pointer-events-none');
+            });
+            el.modalMergeConfirmBtn.addEventListener('click', executeLayersMerge);
+        }
+
+        // ==================== 頁籤切換 ====================
+        function switchTab(tabId) {
+            state.activeTab = tabId;
+            // 按鈕樣式重置
+            const buttons = {
+                upload: el.tabUploadBtn,
+                layers: el.tabLayersBtn,
+                draw: el.tabDrawBtn
+            };
+            const panels = {
+                upload: el.panelUpload,
+                layers: el.panelLayers,
+                draw: el.panelDraw
+            };
+
+            Object.keys(buttons).forEach(key => {
+                if (key === tabId) {
+                    buttons[key].className = "flex-1 py-2 px-3 text-sm font-semibold text-indigo-600 border-b-2 border-indigo-600 flex items-center justify-center gap-2";
+                    panels[key].classList.remove('hidden');
+                } else {
+                    buttons[key].className = "flex-1 py-2 px-3 text-sm font-medium text-slate-500 hover:text-slate-800 flex items-center justify-center gap-2 transition-colors";
+                    panels[key].classList.add('hidden');
+                }
+            });
+
+            // 切換時如果切換到手繪，停用吸管
+            if (tabId !== 'upload') {
+                disablePipette();
+            }
+        }
+
+        // ==================== 視角縮放與移動功能 ====================
+        function resetViewport() {
+            state.zoom = 1.0;
+            state.panX = 0;
+            state.panY = 0;
+            applyViewportTransform();
+        }
+
+        // 平移和縮放應用
+        function applyViewportTransform() {
+            el.canvasContainer.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+            el.zoomLevel.innerText = `${Math.round(state.zoom * 100)}%`;
+        }
+
+        function adjustZoom(amount) {
+            state.zoom = Math.max(0.05, Math.min(5.0, state.zoom + amount));
+            applyViewportTransform();
+        }
+
+        // 縮放並完整適應 viewport，確保地圖 100% 呈現
+        function zoomToFit() {
+            if (!state.imageLoaded) return;
+            const viewportWidth = el.canvasViewport.clientWidth - 48;
+            const viewportHeight = el.canvasViewport.clientHeight - 48;
+            
+            const scaleX = viewportWidth / state.imageWidth;
+            const scaleY = viewportHeight / state.imageHeight;
+            
+            // 完整呈現地圖的比率
+            state.zoom = Math.min(scaleX, scaleY);
+            state.panX = 0;
+            state.panY = 0;
+            applyViewportTransform();
+        }
+
+        function handleCanvasWheel(e) {
+            if (!state.imageLoaded) return;
+            e.preventDefault();
+            
+            const zoomFactor = 1.1;
+            if (e.deltaY < 0) {
+                state.zoom = Math.min(5.0, state.zoom * zoomFactor);
+            } else {
+                state.zoom = Math.max(0.05, state.zoom / zoomFactor);
+            }
+            applyViewportTransform();
+        }
+
+        function handleViewportMouseDown(e) {
+            if (state.imageLoaded && state.activeTab === 'draw' && e.target === el.drawingCanvas) {
+                return; 
+            }
+            if (state.isPipetteActive) return;
+
+            state.isDraggingViewport = true;
+            state.startX = e.clientX - state.panX;
+            state.startY = e.clientY - state.panY;
+            el.canvasViewport.classList.replace('cursor-grab', 'cursor-grabbing');
+        }
+
+        function handleViewportMouseMove(e) {
+            if (!state.isDraggingViewport) return;
+            state.panX = e.clientX - state.startX;
+            state.panY = e.clientY - state.startY;
+            applyViewportTransform();
+        }
+
+        // 停止拖曳視角
+        function handleViewportMouseUp() {
+            if (state.isDraggingViewport) {
+                state.isDraggingViewport = false;
+                el.canvasViewport.classList.replace('cursor-grabbing', 'cursor-grab');
+            }
+        }
+
+        // ==================== 地圖載入邏輯 ====================
+        function handleFileSelect() {
+            const file = el.mapFile.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                loadImageToCanvas(event.target.result);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // 載入精美示範地圖 (包含經典的淺藍水體、深藍海溝、淺綠陸地、黃道路、橘道路、紅城鎮、褐城堡)
+        // 🌟 已更新：地圖元素大升級，將小島著色翠綠色 (#4ade80)，形成與大陸淺綠色 (#bbf7d0) 的完美正綠/淺綠對照比
+        function loadSampleMap() {
+            const sampleCanvas = document.createElement('canvas');
+            sampleCanvas.width = 1200;
+            sampleCanvas.height = 800;
+            const ctx = sampleCanvas.getContext('2d');
+
+            // 1. 最外層的仿羊皮紙白邊框（用於完美演示：地圖底色與紙張背景層的提取分離）
+            ctx.fillStyle = '#fafaf6'; 
+            ctx.fillRect(0, 0, 1200, 800);
+
+            // 2. 地圖中央核心海框（淺藍色）
+            ctx.fillStyle = '#a5f3fc'; 
+            ctx.fillRect(40, 40, 1120, 720);
+
+            // 2.5 深藍色遠古海溝 (深藍色：驗證深藍與淺藍的完美分立控制)
+            ctx.fillStyle = '#1e40af'; 
+            ctx.beginPath();
+            ctx.arc(1020, 180, 85, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 3. 陸地主體 (淺綠色)
+            ctx.fillStyle = '#bbf7d0'; 
+            ctx.beginPath();
+            ctx.moveTo(150, 760);
+            ctx.bezierCurveTo(250, 400, 450, 250, 800, 200);
+            ctx.bezierCurveTo(950, 170, 1100, 350, 1160, 450);
+            ctx.lineTo(1160, 760);
+            ctx.closePath();
+            ctx.fill();
+
+            // 4. 小島嶼 (翠綠色植物：驗證正綠色與陸地淺綠色的完美分離)
+            ctx.fillStyle = '#4ade80'; 
+            ctx.beginPath();
+            ctx.arc(350, 250, 140, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 5. 灰色碎石山脈區 (灰色)
+            ctx.fillStyle = '#a3a3a3'; 
+            ctx.beginPath();
+            ctx.moveTo(600, 280);
+            ctx.lineTo(650, 200);
+            ctx.lineTo(700, 280);
+            ctx.lineTo(750, 190);
+            ctx.lineTo(820, 290);
+            ctx.lineTo(580, 290);
+            ctx.closePath();
+            ctx.fill();
+
+            // 6. 褐色泥土古古堡牆 (深褐色：驗證褐色獨立分層)
+            ctx.fillStyle = '#854d0e'; 
+            ctx.beginPath();
+            ctx.moveTo(150, 760);
+            ctx.quadraticCurveTo(280, 640, 380, 680);
+            ctx.lineTo(390, 710);
+            ctx.quadraticCurveTo(290, 670, 150, 760);
+            ctx.closePath();
+            ctx.fill();
+
+            // 7. 古代皇家商路 (鮮艷橘色：驗證橘色圖層)
+            ctx.strokeStyle = '#f97316'; 
+            ctx.lineWidth = 18;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(350, 760);
+            ctx.quadraticCurveTo(600, 450, 800, 400);
+            ctx.quadraticCurveTo(1000, 350, 1120, 200);
+            ctx.stroke();
+
+            // 7.5 平民林間小徑 (淺黃色：驗證黃色與綠色的完美分立)
+            ctx.strokeStyle = '#fef08a';
+            ctx.lineWidth = 10;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(420, 700);
+            ctx.quadraticCurveTo(550, 580, 720, 640);
+            ctx.stroke();
+
+            // 8. 紅色皇家主城特區 (粉紅色高亮圓底，正紅色高對比主城堡)
+            ctx.fillStyle = '#fecaca'; 
+            ctx.beginPath();
+            ctx.arc(800, 480, 90, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#ef4444'; // 正紅色：驗證紅色與粉紅底色之獨立分立控制
+            ctx.fillRect(770, 440, 60, 40);
+
+            // 9. 森林小樹 (正綠色：驗證正綠與淺綠)
+            ctx.fillStyle = '#22c55e';
+            for (let i = 0; i < 6; i++) {
+                const tx = 500 + i * 50;
+                const ty = 580 + (i % 2) * 40;
+                ctx.beginPath();
+                ctx.moveTo(tx, ty);
+                ctx.lineTo(tx - 18, ty + 36);
+                ctx.lineTo(tx + 18, ty + 36);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // 10. 墨黑描邊與羅盤裝飾
+            ctx.strokeStyle = '#1e293b'; 
+            ctx.lineWidth = 5;
+            // 地圖大框線
+            ctx.strokeRect(40, 40, 1120, 720);
+            // 島嶼線
+            ctx.beginPath();
+            ctx.arc(350, 250, 140, 0, Math.PI * 2);
+            ctx.stroke();
+            // 大陸線
+            ctx.beginPath();
+            ctx.moveTo(150, 760);
+            ctx.bezierCurveTo(250, 400, 450, 250, 800, 200);
+            ctx.bezierCurveTo(950, 170, 1100, 350, 1160, 450);
+            ctx.stroke();
+
+            // 11. 羅盤背景圓圈
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(1050, 650, 50, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 12. 地圖標題與中文文字 (確保黑字完美提取至文字墨線層)
+            ctx.fillStyle = '#0f172a';
+            ctx.font = 'bold 28px "Inter", "Noto Sans TC"';
+            ctx.fillText("王國探索秘境地圖", 70, 100);
+            ctx.font = 'italic 18px "Inter"';
+            ctx.fillText("Kingdom Discovery Map", 70, 130);
+
+            ctx.font = 'bold 15px "Noto Sans TC"';
+            ctx.fillText("中央皇家城堡", 755, 590);
+            ctx.fillText("精靈之森", 540, 640);
+            ctx.fillText("遺落群島", 310, 255);
+            ctx.fillText("南方古代航道", 180, 450);
+            ctx.fillText("灰色遠古尖峰", 605, 320);
+            ctx.fillText("泥土防禦古牆", 260, 730);
+            ctx.fillText("皇家商路(橘)", 860, 350);
+            ctx.fillText("平民小徑(黃)", 560, 700);
+            ctx.fillText("深藍海溝", 970, 290);
+
+            loadImageToCanvas(sampleCanvas.toDataURL());
+        }
+
+        // 確保新載入的地圖與舊資料完全獨立、互不干擾
+        function loadImageToCanvas(dataUrl) {
+            const img = new Image();
+            img.onload = function() {
+                state.originalImage = img;
+                state.imageWidth = img.width;
+                state.imageHeight = img.height;
+                state.imageLoaded = true;
+
+                // 當匯入新地圖時，徹底切斷舊資料鏈
+                resetDecomposition();      // 徹底重設並清空所有分解出來的圖層與渲染 DOM
+                state.selectedColorRGBs = []; // 清空先前地圖提取或吸色累積的色盤，讓新地圖能重新執行全新的色彩聚類
+                resetPresetColorsUI();     // 清除調色盤因吸色產生的自訂按鈕，還原成基礎 5 色
+                clearHandDrawing();        // 清空前一次地圖殘留的手繪標註
+
+                // 調整實體 Canvas 尺寸
+                el.baseCanvas.width = img.width;
+                el.baseCanvas.height = img.height;
+                el.drawingCanvas.width = img.width;
+                el.drawingCanvas.height = img.height;
+
+                // 調整容器大小以符合影像比例
+                el.canvasContainer.style.width = img.width + 'px';
+                el.canvasContainer.style.height = img.height + 'px';
+                
+                // 繪製原始底圖
+                const baseCtx = el.baseCanvas.getContext('2d');
+                baseCtx.clearRect(0, 0, img.width, img.height);
+                baseCtx.drawImage(img, 0, 0);
+
+                // 讀取原始像素資料備用
+                state.originalImgData = baseCtx.getImageData(0, 0, img.width, img.height);
+
+                // UI 更新
+                el.emptyCanvasState.classList.add('hidden');
+                el.canvasContainer.classList.remove('hidden');
+                el.imageDimensions.classList.remove('hidden');
+                el.imageDimensions.innerText = `尺寸: ${img.width} x ${img.height} 像素`;
+                el.canvasStatus.innerHTML = `<i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-500"></i> 地圖載入成功，點擊「執行地圖分層」開始`;
+                
+                // 啟用左側匯入面板按鈕
+                el.runAiBtn.removeAttribute('disabled');
+                
+                // 重新排版並 100% 完整適應畫面
+                lucide.createIcons();
+                zoomToFit();
+                
+                // 生成邊界結構圖
+                generateOutlineLayer();
+                
+                // 當新圖片載入後，更新「圖層管理」面板中的空狀態按鈕
+                renderLayersPanel();
+            };
+            img.src = dataUrl;
+        }
+
+        // 重設計劃調色盤預設色按鈕，將舊圖吸色按掃除
+        function resetPresetColorsUI() {
+            if (el.presetColors) {
+                el.presetColors.innerHTML = `
+                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-red-500" data-color="#ef4444"></button>
+                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-emerald-500" data-color="#10b981"></button>
+                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-blue-500" data-color="#3b82f6"></button>
+                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-amber-500" data-color="#f59e0b"></button>
+                    <button class="w-6 h-6 rounded-full border border-slate-200 bg-stone-800" data-color="#292524"></button>
+                `;
+                // 重新為基礎按鈕綁定事件
+                el.presetColors.querySelectorAll('button').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const color = e.target.getAttribute('data-color');
+                        state.brushColor = color;
+                        el.brushColor.value = color;
+                        setDrawTool('brush');
+                    });
+                });
+            }
+        }
+
+        // HSL 高精細感性感官色差比對演算法
+        // 將 RGB 轉為 HSL 空間，並在低飽和度高亮度的地圖常用色（如：淺藍與淺綠）下提供完美的色相識別防線
+        function rgbToHsl(r, g, b) {
+            r /= 255; g /= 255; b /= 255;
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            let h, s, l = (max + min) / 2;
+            if (max === min) {
+                h = s = 0; // 無彩色 / 灰階
+            } else {
+                const d = max - min;
+                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                switch (max) {
+                    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                    case g: h = (b - r) / d + 2; break;
+                    case b: h = (r - g) / d + 4; break;
+                }
+                h /= 6;
+            }
+            return { h: h * 360, s: s * 100, l: l * 100 };
+        }
+
+        // 灰色、褐色、綠色、藍色、黃色、橘色與正紅色核心分離辨識器
+        // 🌟 核心增強：深度細化「紅/淺紅」、「藍/淺藍」、「綠/淺綠」的感官特徵判定，提供最佳的分立防線，並在灰色判斷中為藍色保留寬限，防止深藍邊緣混色誤判為灰。
+        function getColorCategory(r, g, b) {
+            const hsl = rgbToHsl(r, g, b);
+            
+            // 🌟 智慧判別色相區間：將紅色區間精細化收攏至 [310°, 14°]，與褐色 (>=14°) 進行色相硬切割，徹底避免橘/紅/棕混淆
+            const isRedHue = (hsl.h >= 310 || hsl.h < 14);
+            const isBlueHue = (hsl.h >= 170 && hsl.h < 255);
+            const isGreenHue = (hsl.h >= 75 && hsl.h < 170);
+            const isOrangeYellowHue = (hsl.h >= 14 && hsl.h < 75);
+
+            // 1. 灰色系判斷 (🌟 終極優化：真正的中性色飽和度極低 s < 4。若飽和度在 6%~18% 之間，但具備明顯暖色/冷色色相特徵，則寬限其不落入灰色。徹底防止深藍/正紅邊緣退色被當作灰色)
+            if (hsl.s < 4 || (hsl.s < 18 && !isRedHue && !isBlueHue && !isGreenHue && !isOrangeYellowHue)) {
+                return 'grey';
+            }
+            // 2. 褐色系判斷：飽和度限制 (色相在紅色到黃色之間, 且明度皆中低)，確保深褐色精準識別！且色相嚴格界定在 14° 以上，杜絕與紅色重疊。
+            if (hsl.h >= 14 && hsl.h < 50 && hsl.s >= 12 && hsl.l >= 10 && hsl.l < 50) {
+                return 'brown';
+            }
+            
+            // 🌟 3. 藍色系極致細分 (解決深藍與淺藍的分流，容許最低飽和度 4%)
+            if (isBlueHue && hsl.s >= 4) {
+                if (hsl.l >= 65) {
+                    return 'light-blue'; // 淺藍色（例：淺水、淺灘、珊瑚海）
+                } else {
+                    return 'pure-blue';  // 正藍色/深藍色（例：深海、主要航道）
+                }
+            }
+            
+            // 🌟 4. 綠色系極致細分 (解決正綠與淺綠的分流，容許最低飽和度 4%)
+            if (isGreenHue && hsl.s >= 4) {
+                if (hsl.l >= 65) {
+                    return 'light-green'; // 淺綠色（例：草地、平原、溫帶大陸）
+                } else {
+                    return 'pure-green';  // 正綠色（例：森林、高密植被、樹木）
+                }
+            }
+            
+            // 5. 黃色系判斷：色相在 40~75 區間，飽和度 >= 12
+            if (hsl.h >= 40 && hsl.h < 75 && hsl.s >= 12) {
+                return 'yellow';
+            }
+            // 6. 橘色系判斷 (🌟 色相嚴格限制在 16~40，飽和度調降寬限至 25% 以上，確保邊緣過渡色不被誤判為紅色)
+            if (hsl.h >= 16 && hsl.h < 40 && hsl.s >= 25 && hsl.l >= 30) {
+                return 'orange';
+            }
+            
+            // 🌟 7. 紅色系極致細分 (精確將分水嶺調整至 68% 最佳點，容許最低飽和度 4%)
+            if (isRedHue && hsl.s >= 4) {
+                if (hsl.l >= 68) {
+                    return 'light-red';  // 淺紅色/粉紅色（例：高亮範圍底色、警戒邊緣）
+                } else {
+                    return 'pure-red';   // 正紅色（例：核心地標、主城堡建築）
+                }
+            }
+            return 'other';
+        }
+
+        // 🌟 根據 HSL 色相感知智慧生成高雅、有深度語意的色彩名稱，大幅度優化視覺互動體驗
+        function getSophisticatedColorName(r, g, b) {
+            const hsl = rgbToHsl(r, g, b);
+            const h = hsl.h;
+            const s = hsl.s;
+            const l = hsl.l;
+
+            // 1. 中性色判斷 (黑白灰)
+            if (s < 5) {
+                if (l < 20) return "玄鐵深黑色";
+                if (l < 45) return "岩灰深灰色";
+                if (l < 75) return "迷霧淺灰色";
+                if (l < 92) return "古雅灰白色";
+                return "象牙純白色";
+            }
+
+            // 2. 褐色/沙土/泥土判定 (Hue 14~50, 飽和低/中，明度低/中)
+            if (h >= 14 && h < 50 && s < 60 && l < 60) {
+                if (l < 30) return "古木深褐色";
+                if (l < 45) return "泥土黃褐色";
+                return "沙灘古褐色";
+            }
+
+            // 3. 有色彩系區間
+            if (h >= 340 || h < 14) { // 紅色系
+                if (l < 40) return "櫻桃深紅色";
+                if (l > 72) return "薔薇粉紅色";
+                if (s < 45) return "珊瑚淺紅色";
+                return "烈焰正紅色";
+            }
+            if (h >= 14 && h < 40) { // 橘色系
+                if (l < 40) return "琥珀深橘色";
+                if (l > 70) return "夕陽淺橙色";
+                return "晚霞鮮橙色";
+            }
+            if (h >= 40 && h < 65) { // 黃色/金色系
+                if (l < 45) return "古銅深黃色";
+                if (l > 75) return "暖陽淺黃色";
+                return "帝王金黃色";
+            }
+            if (h >= 65 && h < 165) { // 綠色系
+                if (h < 100) { // 黃綠/嫩綠
+                    if (l < 40) return "橄欖深綠色";
+                    return "青檸嫩綠色";
+                }
+                if (l < 35) return "松針深綠色";
+                if (l > 70) return "粉綠萌芽色";
+                if (s > 60) return "翠綠植被色";
+                return "草綠平原色";
+            }
+            if (h >= 165 && h < 200) { // 青色/湖水藍系
+                if (l < 40) return "湖水深青色";
+                return "青瓷淺青色";
+            }
+            if (h >= 200 && h < 255) { // 藍色系
+                if (l < 35) return "深海靛藍色";
+                if (l > 72) return "粉藍水系色";
+                return "蔚藍海洋色";
+            }
+            if (h >= 255 && h < 295) { // 紫色系
+                if (l < 40) return "皇家深紫色";
+                return "丁香淺紫色";
+            }
+            // 295 ~ 340 (洋紅/紫紅/粉紅系)
+            if (l > 70) return "粉櫻淺紅桃";
+            return "霓虹洋紅色";
+        }
+
+        // 🌟 舊有命名函式作安全保留，內部直接橋接至新智慧命名
+        function getColorNameFromRGB(r, g, b) {
+            return getSophisticatedColorName(r, g, b);
+        }
+
+        function getHSLColorDistance(c1, c2) {
+            const hsl1 = rgbToHsl(c1.r, c1.g, c1.b);
+            const hsl2 = rgbToHsl(c2.r, c2.g, c2.b);
+            
+            // 計算色相（Hue）最短環狀弧度距離
+            let dh = Math.abs(hsl1.h - hsl2.h);
+            if (dh > 180) dh = 360 - dh;
+            
+            // 色相差對應到 0-100 正規化數值
+            const dhNorm = (dh / 180) * 100;
+            const ds = Math.abs(hsl1.s - hsl2.s);
+            const dl = Math.abs(hsl1.l - hsl2.l);
+            
+            // 🌟 [優化機制]: 強效跨分類阻隔，阻絕同系雙子色及容易黏連色彩的相互侵蝕，將推力拉至極限
+            const cat1 = getColorCategory(c1.r, c1.g, c1.b);
+            const cat2 = getColorCategory(c2.r, c2.g, c2.b);
+            let categoryPenalty = 0;
+            let customLightWeight = null;
+            let customSatWeight = null;
+            let customHueWeight = null;
+            
+            if (cat1 !== cat2) {
+                // 1. 灰色與褐色強效分離
+                if ((cat1 === 'grey' && cat2 === 'brown') || (cat1 === 'brown' && cat2 === 'grey')) {
+                    categoryPenalty = 120; 
+                }
+                // 2. 藍色（不論正藍或淺藍）與灰色分離 (🌟 感知加強：150 點，並引入飽和度排斥，確保深藍色邊緣絕對不變灰)
+                if (((cat1 === 'pure-blue' || cat1 === 'light-blue') && cat2 === 'grey') || 
+                    ((cat2 === 'pure-blue' || cat2 === 'light-blue') && cat1 === 'grey')) {
+                    categoryPenalty = 150;
+                    customSatWeight = 2.5; // 強烈對比飽和度差，徹底分離深藍與灰色，確保深藍色邊緣絕對不變灰
+                }
+                // 3. 藍色系與綠色系強效分離 (🌟 大幅提拉至 150 點，並賦予強烈色相斥力 7.0，杜絕藍與綠混淆)
+                if (((cat1 === 'pure-blue' || cat1 === 'light-blue') && (cat2 === 'pure-green' || cat2 === 'light-green')) ||
+                    ((cat2 === 'pure-blue' || cat2 === 'light-blue') && (cat1 === 'pure-green' || cat1 === 'light-green'))) {
+                    categoryPenalty = 150; 
+                    customHueWeight = 7.0; // 極限放大藍色與綠色色相排斥力
+                }
+                // 4. 黃色與綠色系強效分離
+                if (((cat1 === 'yellow') && (cat2 === 'pure-green' || cat2 === 'light-green')) ||
+                    ((cat2 === 'yellow') && (cat1 === 'pure-green' || cat1 === 'light-green'))) {
+                    categoryPenalty = 115; 
+                }
+                // 🌟 5. 紅色與淺紅/粉紅極致分立 (將懲罰值大幅加強至 180，並賦予強大的自訂明度、飽和度斥力)
+                if ((cat1 === 'light-red' && cat2 === 'pure-red') || (cat1 === 'pure-red' && cat2 === 'light-red')) {
+                    categoryPenalty = 180;
+                    customLightWeight = 3.0; // 明度比對權重拉升至 6 倍（3.0），杜絕明度黏連
+                    customSatWeight = 1.8;   // 飽和度比對權重同步拉升
+                }
+                // 🌟 6. 藍色與淺藍極致分立 (同步優化)
+                if ((cat1 === 'light-blue' && cat2 === 'pure-blue') || (cat1 === 'pure-blue' && cat2 === 'light-blue')) {
+                    categoryPenalty = 180;
+                    customLightWeight = 3.0;
+                    customSatWeight = 1.8;
+                }
+                // 🌟 7. 綠色與淺綠極致分立 (同步優化)
+                if ((cat1 === 'pure-green' && cat2 === 'light-green') || (cat1 === 'light-green' && cat2 === 'pure-green')) {
+                    categoryPenalty = 180;
+                    customLightWeight = 3.0;
+                    customSatWeight = 1.8;
+                }
+                // 🌟 8. 橘、紅（正紅/淺紅）極致分離：大幅提拉懲罰值並注入高敏色相權重，徹底杜絕橘紅交織
+                if (((cat1 === 'orange') && (cat2 === 'pure-red' || cat2 === 'light-red')) || 
+                    ((cat2 === 'orange') && (cat1 === 'pure-red' || cat1 === 'light-red'))) {
+                    categoryPenalty = 190;
+                    customHueWeight = 6.0;   // 劇烈放大色相（Hue）敏感度，拉開兩者邊界
+                    customLightWeight = 1.5;
+                }
+                if ((cat1 === 'orange' && cat2 === 'brown') || (cat1 === 'brown' && cat2 === 'orange')) {
+                    categoryPenalty = 130;
+                }
+                // 🌟 [新增強效紅棕阻隔]：防止正紅/淺紅與褐色、泥土色黏連混淆，徹底杜絕紅與棕混淆 (懲罰提拉至 150 點，並設定 7.0 頂格排斥力)
+                if (((cat1 === 'brown') && (cat2 === 'pure-red' || cat2 === 'light-red')) ||
+                    ((cat2 === 'brown') && (cat1 === 'pure-red' || cat1 === 'light-red'))) {
+                    categoryPenalty = 150;
+                    customHueWeight = 7.0; // 極限放大紅色與褐色的色相排斥力
+                    customLightWeight = 1.5;
+                }
+                // 🌟 9. 正紅/淺紅 與 灰色阻隔（🌟 感知加強：150 點，並引入自訂飽和度斥力，防止紅色邊緣被灰色誤吞，解決紅泥被灰色污染的漏洞）
+                if (((cat1 === 'grey') && (cat2 === 'pure-red' || cat2 === 'light-red')) ||
+                    ((cat2 === 'grey') && (cat1 === 'pure-red' || cat1 === 'light-red'))) {
+                    categoryPenalty = 150;
+                    customSatWeight = 2.5; // 飽和度強排斥力，避免紅色混入灰色
+                }
+                // 🌟 10. 黃色與紅色系（正紅/淺紅）強效分離 (解決黃、紅邊界交錯及道路與城牆誤判混淆的漏洞)
+                if (((cat1 === 'yellow') && (cat2 === 'pure-red' || cat2 === 'light-red')) ||
+                    ((cat2 === 'yellow') && (cat1 === 'pure-red' || cat1 === 'light-red'))) {
+                    categoryPenalty = 145;
+                    customHueWeight = 6.5;   // 賦予極高色相（Hue）排斥力，強制黃紅分流
+                    customLightWeight = 1.5;
+                }
+                
+                // 🌟 [通用類別防線]：對於所有其他不同的感官類別，預設附加基礎阻隔
+                if (categoryPenalty === 0) {
+                    categoryPenalty = 80;
+                }
+            }
+            
+            // 加權分配：若有特定自訂權重，優先選用
+            const isChromatic = (hsl1.s > 5 && hsl2.s > 5);
+            const hueWeight = customHueWeight !== null ? customHueWeight : (isChromatic ? 3.5 : 0.6);
+            const satWeight = customSatWeight !== null ? customSatWeight : 1.0;
+            const lightWeight = customLightWeight !== null ? customLightWeight : 0.5; // 預設亮色系間低亮度比重，但雙子色互斥時會拉高
+            
+            return Math.sqrt(
+                Math.pow(dhNorm * hueWeight, 2) +
+                Math.pow(ds * satWeight, 2) +
+                Math.pow(dl * lightWeight, 2)
+            ) + categoryPenalty;
+        }
+
+        // ==================== 邊線提取 (Sobel 濾鏡) ====================
+        function generateOutlineLayer() {
+            if (!state.originalImgData) return;
+            const w = state.imageWidth;
+            const h = state.imageHeight;
+            const src = state.originalImgData.data;
+            
+            const edgeCanvas = document.createElement('canvas');
+            edgeCanvas.width = w;
+            edgeCanvas.height = h;
+            const edgeCtx = edgeCanvas.getContext('2d');
+            const edgeImgData = edgeCtx.createImageData(w, h);
+            const dst = edgeImgData.data;
+
+            // 1. 先計算灰階
+            const grayscale = new Uint8Array(w * h);
+            for (let i = 0; i < src.length; i += 4) {
+                grayscale[i / 4] = 0.299 * src[i] + 0.587 * src[i+1] + 0.114 * src[i+2];
+            }
+
+            // 2. 應用 3x3 Sobel 算子
+            for (let y = 1; y < h - 1; y++) {
+                for (let x = 1; x < w - 1; x++) {
+                    const idx = y * w + x;
+                    
+                    const gx = 
+                        -1 * grayscale[(y-1)*w + (x-1)] + 1 * grayscale[(y-1)*w + (x+1)] +
+                        -2 * grayscale[y*w + (x-1)]     + 2 * grayscale[y*w + (x+1)] +
+                        -1 * grayscale[(y+1)*w + (x-1)] + 1 * grayscale[(y+1)*w + (x+1)];
+                        
+                    const gy = 
+                        -1 * grayscale[(y-1)*w + (x-1)] - 2 * grayscale[(y-1)*w + x] - 1 * grayscale[(y-1)*w + (x+1)] +
+                        1 * grayscale[(y+1)*w + (x-1)] + 2 * grayscale[(y+1)*w + x] + 1 * grayscale[(y+1)*w + (x+1)];
+
+                    const mag = Math.min(255, Math.sqrt(gx * gx + gy * gy));
+                    
+                    const dIdx = idx * 4;
+                    if (mag > 40) { 
+                        dst[dIdx] = 15;     // R
+                        dst[dIdx+1] = 23;   // G
+                        dst[dIdx+2] = 42;   // B
+                        dst[dIdx+3] = Math.min(255, mag * 1.6); // A
+                    } else {
+                        dst[dIdx+3] = 0; // 透明
+                    }
+                }
+            }
+            edgeCtx.putImageData(edgeImgData, 0, 0);
+            state.edgeImgData = edgeCanvas; // 直接緩存 Canvas，以便快速重繪
+        }
+
+        // ==================== AI 色彩分析與圖層分解核心演算法 ====================
+        async function runMapDecomposition() {
+            if (!state.imageLoaded) return;
+            
+            el.aiLoadingOverlay.classList.remove('opacity-0', 'pointer-events-none');
+            setProgress(10, "正在進行 AI 色彩分析與比對...");
+            await delay(400);
+
+            // 清理舊有的圖層資訊，確保乾淨分離
+            resetDecomposition();
+
+            const src = state.originalImgData.data;
+            const w = state.imageWidth;
+            const h = state.imageHeight;
+
+            // 建立一個高精度追蹤陣列，記錄地圖中的 100% 像素分配狀態
+            // 0: 未指派, 1: 已指派至文字墨線層, 2: 已指派至亮色背景紙層, 3: 已指派至色彩分類特徵層, 4: 終極補償未分類層
+            const pixelAssignment = new Uint8Array(w * h);
+
+            // 1. 【第一層：自動提取原有文字與高對比黑色墨線】
+            setProgress(25, "正在提取並保留地圖文字與標籤墨線...");
+            await delay(300);
+
+            // 先掃描判定是否有足夠的文字像素
+            let textPixelCount = 0;
+            for (let i = 0; i < src.length; i += 4) {
+                const r = src[i];
+                const g = src[i+1];
+                const b = src[i+2];
+                const a = src[i+3];
+                if (a === 0) continue;
+                const hsl = rgbToHsl(r, g, b);
+                const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                if (luma < 55 || (luma < 95 && hsl.s < 20)) { 
+                    textPixelCount++;
+                }
+            }
+
+            // 🌟 僅當文字墨線像素大於等於 10 個，才獨立建立圖層，避免產出無意義卡片
+            if (textPixelCount >= 10) {
+                const textCanvas = document.createElement('canvas');
+                textCanvas.width = w;
+                textCanvas.height = h;
+                const textCtx = textCanvas.getContext('2d');
+                const textImgData = textCtx.createImageData(w, h);
+                const textDst = textImgData.data;
+
+                for (let i = 0; i < src.length; i += 4) {
+                    const r = src[i];
+                    const g = src[i+1];
+                    const b = src[i+2];
+                    const a = src[i+3];
+                    if (a === 0) continue;
+                    const hsl = rgbToHsl(r, g, b);
+                    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                    if (luma < 55 || (luma < 95 && hsl.s < 20)) { 
+                        textDst[i] = r;
+                        textDst[i+1] = g;
+                        textDst[i+2] = b;
+                        textDst[i+3] = a;
+                        pixelAssignment[i / 4] = 1; // 標記為文字墨線層
+                    } else {
+                        textDst[i+3] = 0;
+                    }
+                }
+                textCtx.putImageData(textImgData, 0, 0);
+
+                state.layers.push({
+                    id: 'layer-text',
+                    name: "地圖原有文字與深色細節",
+                    color: "#1e293b",
+                    colorRGB: { r: 30, g: 41, b: 59 },
+                    opacity: 100,
+                    visible: true,
+                    renderAsSolid: false,
+                    canvas: textCanvas,
+                    ctx: textCtx
+                });
+            }
+
+            // 2. 【第二層：全地圖亮色空白背景與紙張底層提取】
+            setProgress(40, "正在提取地圖紙張底層與空白背景層...");
+            await delay(200);
+
+            // 先掃描檢測是否有足夠的亮色背景像素
+            let bgPixelCount = 0;
+            for (let i = 0; i < src.length; i += 4) {
+                const idx = i / 4;
+                if (pixelAssignment[idx] !== 0) continue; // 已已被第一層文字佔用
+                const r = src[i];
+                const g = src[i+1];
+                const b = src[i+2];
+                const a = src[i+3];
+                if (a === 0) continue;
+                const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                const hsl = rgbToHsl(r, g, b);
+                if (luma >= 232 && hsl.s < 18) { 
+                    bgPixelCount++;
+                }
+            }
+
+            // 🌟 僅當背景像素大於等於 10 個，才獨立建立背景圖層，否則歸為未分類，避免無意義卡片
+            if (bgPixelCount >= 10) {
+                const bgCanvas = document.createElement('canvas');
+                bgCanvas.width = w;
+                bgCanvas.height = h;
+                const bgCtx = bgCanvas.getContext('2d');
+                const bgImgData = bgCtx.createImageData(w, h);
+                const bgDst = bgImgData.data;
+
+                for (let i = 0; i < src.length; i += 4) {
+                    const idx = i / 4;
+                    if (pixelAssignment[idx] !== 0) continue;
+
+                    const r = src[i];
+                    const g = src[i+1];
+                    const b = src[i+2];
+                    const a = src[i+3];
+                    if (a === 0) continue;
+
+                    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                    const hsl = rgbToHsl(r, g, b);
+                    if (luma >= 232 && hsl.s < 18) { 
+                        bgDst[i] = r;
+                        bgDst[i+1] = g;
+                        bgDst[i+2] = b;
+                        bgDst[i+3] = a;
+                        pixelAssignment[idx] = 2; // 標記為背景紙盤底層
+                    } else {
+                        bgDst[i+3] = 0;
+                    }
+                }
+                bgCtx.putImageData(bgImgData, 0, 0);
+
+                state.layers.push({
+                    id: 'layer-background',
+                    name: "地圖底色與紙張背景層",
+                    color: "#f8fafc",
+                    colorRGB: { r: 248, g: 250, b: 252 },
+                    opacity: 100,
+                    visible: true,
+                    renderAsSolid: false,
+                    canvas: bgCanvas,
+                    ctx: bgCtx
+                });
+            }
+
+            // 3. 【第三層：自動色彩聚類分析】 (精確搜尋有色特塊 - 圖層預算提升至 18 個以容納肉眼所有可見色)
+            if (state.selectedColorRGBs.length === 0) {
+                setProgress(55, "自動辨識地圖中相異色彩與圖例...");
+                state.selectedColorRGBs = autoDetectDominantColors(src, 18); 
+            }
+
+            // 零遺漏安全防線：若圖片沒有高對比主色，強制提取平均色防錯
+            if (state.selectedColorRGBs.length === 0) {
+                let rSum = 0, gSum = 0, bSum = 0, remCount = 0;
+                for (let i = 0; i < src.length; i += 4) {
+                    if (pixelAssignment[i / 4] === 0 && src[i+3] > 0) {
+                        rSum += src[i];
+                        gSum += src[i+1];
+                        bSum += src[i+2];
+                        remCount++;
+                    }
+                }
+                if (remCount > 0) {
+                    const avgR = Math.round(rSum / remCount);
+                    const avgG = Math.round(gSum / remCount);
+                    const avgB = Math.round(bSum / remCount);
+                    state.selectedColorRGBs.push({
+                        r: avgR,
+                        g: avgG,
+                        b: avgB,
+                        name: getSophisticatedColorName(avgR, avgG, avgB) + " (" + rgbToHex(avgR, avgG, avgB) + ")"
+                    });
+                } else {
+                    state.selectedColorRGBs.push({ r: 128, g: 128, b: 128, name: "其他岩灰圖層 (#808080)" });
+                }
+            }
+
+            // 4. 【第四層：100% 全像素最近鄰 HSL 歸納分配】
+            setProgress(70, "將全地圖彩色特徵與雜色區塊分配至各分類圖層...");
+            await delay(300);
+
+            const numClusters = state.selectedColorRGBs.length;
+            const layerCanvases = [];
+            const layerContexts = [];
+            const layerImgDatas = [];
+
+            // 為各色彩分類建立畫布快取
+            for (let k = 0; k < numClusters; k++) {
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.createImageData(w, h);
+                
+                layerCanvases.push(canvas);
+                layerContexts.push(ctx);
+                layerImgDatas.push(imgData);
+            }
+
+            // 統計各聚類分配到的像素點數量，以便後續過濾空卡片
+            const clusterPixelCounts = new Int32Array(numClusters);
+
+            // 100% 全像素無遺漏分配循環
+            for (let i = 0; i < src.length; i += 4) {
+                const idx = i / 4;
+                if (pixelAssignment[idx] !== 0) continue; // 已分配至文字層或背景底色層
+
+                const r = src[i];
+                const g = src[i+1];
+                const b = src[i+2];
+                const a = src[i+3];
+
+                if (a === 0) continue; // 忽略完全透明的邊緣外像素
+
+                // 透過優化後的 HSL 演算法比對出最相近的色彩聚類圖層
+                let minDst = Infinity;
+                let nearestIdx = 0;
+
+                for (let k = 0; k < numClusters; k++) {
+                    const tc = state.selectedColorRGBs[k];
+                    const dist = getHSLColorDistance({ r, g, b }, tc);
+                    
+                    if (dist < minDst) {
+                        minDst = dist;
+                        nearestIdx = k;
+                    }
+                }
+
+                // 寫入目標圖層，完美保留其原始光影漸變與紋理
+                const destData = layerImgDatas[nearestIdx].data;
+                destData[i] = r;
+                destData[i+1] = g;
+                destData[i+2] = b;
+                destData[i+3] = a;
+                pixelAssignment[idx] = 3; // 先暫時標記為已分配色彩圖層
+                clusterPixelCounts[nearestIdx]++;
+            }
+
+            // 🌟 5. 【動態圖層噪點防範與卡片完整呈現機制】
+            // 降低丟棄閥值為 15 像素（僅作為防範空圖層防線），確保偵測到的主色 100% 呈現在介面中
+            const dynamicMinPixels = 15; 
+
+            // 將處理後的 ImageData 寫回各自的 Canvas (🌟 引入意義像素過濾，防堵空圖層/無反應卡片)
+            for (let k = 0; k < numClusters; k++) {
+                // 如果分配到該主題色的總像素點低於過濾閾值（微弱邊界噪點或抗鋸齒灰色帶），則將其判定為「無效空白圖層」
+                if (clusterPixelCounts[k] < dynamicMinPixels) {
+                    // 🌟 為了確保「零遺漏」，必須將這些被丟棄色塊像素點的標記改回 0
+                    // 這樣它們在下一個階段會自動被「終極未分類補償圖層」完美收納，絕不漏掉任何一個色塊！
+                    const imgData = layerImgDatas[k];
+                    const destData = imgData.data;
+                    for (let i = 0; i < destData.length; i += 4) {
+                        if (destData[i+3] > 0) {
+                            const idx = i / 4;
+                            pixelAssignment[idx] = 0; // 重置標記，放回公海
+                        }
+                    }
+                    continue; // 絕不添加這張無意義的空白卡片！
+                }
+
+                const targetColor = state.selectedColorRGBs[k];
+                const progressVal = 70 + Math.floor((k / numClusters) * 20);
+                setProgress(progressVal, `優化重塑: ${targetColor.name}...`);
+                
+                layerContexts[k].putImageData(layerImgDatas[k], 0, 0);
+
+                state.layers.push({
+                    id: 'layer-' + state.layers.length,
+                    name: targetColor.name,
+                    color: rgbToHex(targetColor.r, targetColor.g, targetColor.b),
+                    colorRGB: targetColor,
+                    opacity: 100,
+                    visible: true,
+                    renderAsSolid: false,
+                    canvas: layerCanvases[k],
+                    ctx: layerContexts[k]
+                });
+                
+                await delay(80);
+            }
+
+            // 5. 【終極未分類補償圖層】：確保 100% 沒有任何非透明像素被遺漏 (零漏失保障)
+            setProgress(90, "進行終極像素無遺漏完整性檢測...");
+            await delay(100);
+
+            let unassignedCount = 0;
+            const unassignedCanvas = document.createElement('canvas');
+            unassignedCanvas.width = w;
+            unassignedCanvas.height = h;
+            const unassignedCtx = unassignedCanvas.getContext('2d');
+            const unassignedImgData = unassignedCtx.createImageData(w, h);
+            const unassignedDst = unassignedImgData.data;
+
+            for (let i = 0; i < src.length; i += 4) {
+                const idx = i / 4;
+                if (pixelAssignment[idx] === 0 && src[i+3] > 0) {
+                    unassignedDst[i] = src[i];
+                    unassignedDst[i+1] = src[i+1];
+                    unassignedDst[i+2] = src[i+2];
+                    unassignedDst[i+3] = src[i+3];
+                    unassignedCount++;
+                    pixelAssignment[idx] = 4; // 標記為補償未分類圖層
+                }
+            }
+
+            if (unassignedCount > 0) {
+                unassignedCtx.putImageData(unassignedImgData, 0, 0);
+                
+                // 計算未分類像素的平均色進行命名
+                let rSum = 0, gSum = 0, bSum = 0;
+                let validCount = 0;
+                for (let i = 0; i < src.length; i += 4) {
+                    if (pixelAssignment[i / 4] === 4) {
+                        rSum += src[i];
+                        gSum += src[i+1];
+                        bSum += src[i+2];
+                        validCount++;
+                    }
+                }
+                const finalR = Math.round(rSum / validCount);
+                const finalG = Math.round(gSum / validCount);
+                const finalB = Math.round(bSum / validCount);
+                const hexStr = rgbToHex(finalR, finalG, finalB);
+
+                state.layers.push({
+                    id: 'layer-unassigned',
+                    name: `未分類細節 (${getSophisticatedColorName(finalR, finalG, finalB)}) (${hexStr})`,
+                    color: hexStr,
+                    colorRGB: { r: finalR, g: finalG, b: finalB },
+                    opacity: 100,
+                    visible: true,
+                    renderAsSolid: false,
+                    canvas: unassignedCanvas,
+                    ctx: unassignedCtx
+                });
+            }
+
+            setProgress(95, "圖層合流合成渲染中...");
+            await delay(150);
+
+            // 更新 UI 與畫布渲染
+            renderLayersPanel();
+            updateLayersRender();
+
+            setProgress(100, "地圖分解完成！");
+            await delay(200);
+            el.aiLoadingOverlay.classList.add('opacity-0', 'pointer-events-none');
+            
+            switchTab('layers');
+            el.canvasStatus.innerHTML = `<i data-lucide="layers" class="w-3.5 h-3.5 text-indigo-600"></i> AI 已將地圖中 100% 元素完美劃分並提取為 ${state.layers.length} 個圖層！`;
+            el.downloadCompositeBtn.removeAttribute('disabled');
+            lucide.createIcons();
+        }
+
+        // 輔助函式：自動色彩提取 
+        // 🌟 [重構優化]: 升級為高密度鄰域固體度採樣（約 25,000 點），過濾邊緣與描邊混色，精準抽取每一個肉眼相異色塊！
+        function autoDetectDominantColors(pixels, limit = 18) {
+            const w = state.imageWidth;
+            const h = state.imageHeight;
+            const clusters = [];
+            const threshold = 18; // 🌟 聚類分離閥值縮小至 18，完美解析微小相鄰色差
+            
+            // 🌟 1. 智慧高密度網格採樣 (約 25,600 點)
+            const stepX = Math.max(3, Math.floor(w / 160));
+            const stepY = Math.max(3, Math.floor(h / 160));
+
+            for (let y = stepY; y < h - stepY; y += stepY) {
+                for (let x = stepX; x < w - stepX; x += stepX) {
+                    const idx = (y * w + x) * 4;
+                    const r = pixels[idx];
+                    const g = pixels[idx+1];
+                    const b = pixels[idx+2];
+                    const a = pixels[idx+3];
+
+                    // 排除高透明與極端背景/文字色
+                    if (a < 235) continue; 
+                    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                    if (luma > 242 || luma < 45) continue; 
+
+                    // 🌟 2. 局部固體度（Solidness）鄰域色差檢查：確保該點位於純色塊內部，非描邊過渡漸變點
+                    let isSolid = true;
+                    const neighborOffsets = [-1, 1, -w, w];
+                    for (let offset of neighborOffsets) {
+                        const nIdx = (y * w + x + offset) * 4;
+                        const nr = pixels[nIdx];
+                        const ng = pixels[nIdx+1];
+                        const nb = pixels[nIdx+2];
+                        const diff = Math.abs(r - nr) + Math.abs(g - ng) + Math.abs(b - nb);
+                        if (diff > 16) { // 局部色差大於16說明正處於抗鋸齒交界邊界上
+                            isSolid = false;
+                            break;
+                        }
+                    }
+                    if (!isSolid) continue;
+
+                    // 3. 執行聚類比對
+                    let found = false;
+                    for (let c of clusters) {
+                        const dist = getHSLColorDistance({ r, g, b }, c);
+                        if (dist < threshold) {
+                            c.r = Math.floor((c.r * c.count + r) / (c.count + 1));
+                            c.g = Math.floor((c.g * c.count + g) / (c.count + 1));
+                            c.b = Math.floor((c.b * c.count + b) / (c.count + 1));
+                            c.count++;
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        clusters.push({ r, g, b, count: 1 });
+                    }
+                }
+            }
+
+            // 🌟 4. 過濾噪點聚類，只要採樣點數大於等於 3，即視為一個肉眼可見的真實獨立色塊！
+            let validClusters = clusters.filter(c => c.count >= 3);
+            
+            // 依聚類像素覆蓋比重（Count）降序排列（大色塊在前，精細小色塊在後）
+            validClusters.sort((a, b) => b.count - a.count);
+
+            // 擷取前 limit 個 (預設上限擴大為 18 個，完美分立所有相異色塊)
+            const finalClusters = validClusters.slice(0, limit);
+
+            return finalClusters.map((c) => {
+                const hex = rgbToHex(c.r, c.g, c.b);
+                return {
+                    r: c.r,
+                    g: c.g,
+                    b: c.b,
+                    name: `${getSophisticatedColorName(c.r, c.g, c.b)} (${hex})`
+                };
+            });
+        }
+
+        // ==================== 畫布圖層動態渲染 ====================
+        function updateLayersRender() {
+            el.layersRenderStack.innerHTML = '';
+            
+            const isAnyLayerVisible = state.layers.some(l => l.visible);
+            el.baseCanvas.style.opacity = isAnyLayerVisible ? '0.08' : '1.0';
+
+            // 1. 動態疊加各個獨立圖層
+            state.layers.forEach(layer => {
+                if (!layer.visible) return;
+
+                const layerEl = document.createElement('canvas');
+                layerEl.width = state.imageWidth;
+                layerEl.height = state.imageHeight;
+                layerEl.className = "absolute inset-0 pointer-events-none transition-opacity duration-200";
+                layerEl.style.opacity = layer.opacity / 100;
+                
+                const ctx = layerEl.getContext('2d');
+                ctx.drawImage(layer.canvas, 0, 0);
+
+                // 如果啟用了「純色填滿」模式：
+                if (layer.renderAsSolid) {
+                    ctx.globalCompositeOperation = 'source-in';
+                    ctx.fillStyle = layer.color;
+                    ctx.fillRect(0, 0, state.imageWidth, state.imageHeight);
+                }
+
+                el.layersRenderStack.appendChild(layerEl);
+            });
+
+            // 2. 動態渲染「獨立定位邊線」並覆蓋其上
+            const edgeOpacity = parseInt(el.edgeOpacitySlider.value) / 100;
+            if (state.edgeImgData && edgeOpacity > 0) {
+                const edgeLayerEl = document.createElement('canvas');
+                edgeLayerEl.width = state.imageWidth;
+                edgeLayerEl.height = state.imageHeight;
+                edgeLayerEl.className = "absolute inset-0 pointer-events-none";
+                edgeLayerEl.style.opacity = edgeOpacity;
+
+                const edgeCtx = edgeLayerEl.getContext('2d');
+                edgeCtx.drawImage(state.edgeImgData, 0, 0);
+                
+                el.layersRenderStack.appendChild(edgeLayerEl);
+            }
+        }
+
+        // 重新繪製左側圖層清單 (結合 🌟圖層合併 選取模式渲染)
+        function renderLayersPanel() {
+            el.layersListContainer.innerHTML = '';
+
+            // 如果圖層清單為空，渲染引導面板並直接附上「執行地圖分層」按鈕
+            if (state.layers.length === 0) {
+                el.layersListContainer.innerHTML = `
+                    <div class="text-center py-8 text-slate-400 text-xs space-y-4">
+                        <i data-lucide="layers-3" class="w-8 h-8 mx-auto mb-2 stroke-1"></i>
+                        <p class="px-4 text-slate-500">地圖尚未分層。請先點選下方按鈕，AI 將自動為您萃取乾淨的獨立圖層。</p>
+                        <button id="empty-run-ai-btn" class="mx-auto bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-4 rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed" ${state.imageLoaded ? '' : 'disabled'}>
+                            <i data-lucide="wand2" class="w-3.5 h-3.5"></i>
+                            <span>執行地圖分層</span>
+                        </button>
+                    </div>
+                `;
+                
+                // 停用合併按鈕
+                el.toggleMergeModeBtn.setAttribute('disabled', 'true');
+                el.toggleMergeModeBtn.classList.add('opacity-40', 'cursor-not-allowed');
+
+                const emptyRunAiBtn = document.getElementById('empty-run-ai-btn');
+                if (emptyRunAiBtn) {
+                    emptyRunAiBtn.addEventListener('click', runMapDecomposition);
+                }
+                lucide.createIcons();
+                return;
+            }
+
+            // 啟用合併圖層按鈕（如果圖層大於等於2張）
+            if (state.layers.length >= 2) {
+                el.toggleMergeModeBtn.removeAttribute('disabled');
+                el.toggleMergeModeBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+            } else {
+                el.toggleMergeModeBtn.setAttribute('disabled', 'true');
+                el.toggleMergeModeBtn.classList.add('opacity-40', 'cursor-not-allowed');
+                // 若正在合併模式但圖層少於2，強制關閉合併模式
+                if (state.isMergeModeActive) {
+                    state.isMergeModeActive = false;
+                    state.selectedLayerIdsForMerge = [];
+                    el.mergeActionBar.classList.add('hidden');
+                    el.toggleMergeModeBtn.classList.remove('bg-indigo-100', 'text-indigo-800', 'px-2', 'py-1', 'rounded-lg');
+                }
+            }
+
+            state.layers.forEach((layer) => {
+                const item = document.createElement('div');
+                const isSelected = state.selectedLayerIdsForMerge.includes(layer.id);
+                
+                item.className = `layer-item-card p-3.5 bg-slate-50 border ${layer.visible ? 'border-slate-200' : 'border-slate-100 opacity-60'} ${isSelected && state.isMergeModeActive ? 'ring-2 ring-indigo-500 bg-indigo-50/10' : ''} rounded-xl transition-all space-y-3`;
+                
+                const colorBubble = `style="background-color: ${layer.color};"`;
+
+                // 根據合併選取狀態決定是否渲染 Checkbox 選擇框
+                let selectSection = '';
+                if (state.isMergeModeActive) {
+                    selectSection = `
+                        <label class="flex items-center justify-center cursor-pointer shrink-0 mr-1.5">
+                            <input type="checkbox" class="layer-merge-checkbox w-4.5 h-4.5 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer" data-id="${layer.id}" ${isSelected ? 'checked' : ''}>
+                        </label>
+                    `;
+                }
+
+                // [UI 編輯介面增強]: 顯式添加了鉛筆修改按鈕與美觀的編輯輸入框，全面強化圖層互動
+                item.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2.5 flex-1 min-w-0">
+                            ${selectSection}
+                            <span class="w-4 h-4 rounded-full border border-slate-300 block shadow-sm shrink-0" ${colorBubble}></span>
+                            <div class="flex items-center gap-1 flex-1 min-w-0 bg-white/40 hover:bg-white border border-transparent hover:border-slate-200 rounded-lg px-1 py-0.5 transition-all">
+                                <input type="text" class="layer-name-input text-xs font-semibold text-slate-700 bg-transparent px-1 py-0.5 w-full focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white rounded transition-all min-w-0" value="${layer.name}" data-id="${layer.id}" ${state.isMergeModeActive ? 'disabled' : ''}>
+                                ${!state.isMergeModeActive ? `
+                                <button class="rename-trigger-btn p-0.5 text-slate-400 hover:text-indigo-600 rounded transition-colors shrink-0" title="點擊修改名稱">
+                                    <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                                </button>
+                                ` : ''}
+                            </div>
+                        </div>
+                        
+                        <!-- 🌟 合併選取模式下隱藏不必要的控制按鈕 -->
+                        ${!state.isMergeModeActive ? `
+                        <div class="flex items-center gap-1.5 shrink-0 ml-2">
+                            <!-- 純色填滿 vs 原始紋理切換 -->
+                            <button class="solid-toggle-btn p-1 rounded hover:bg-slate-100 transition-colors ${layer.renderAsSolid ? 'text-indigo-600 bg-indigo-50 border border-indigo-100' : 'text-slate-400'}" data-id="${layer.id}" title="${layer.renderAsSolid ? '目前為：純色填滿 (點擊切換為原始紋理)' : '目前為：原始紋理 (點擊切換為純色填滿)'}">
+                                <i data-lucide="${layer.renderAsSolid ? 'palette' : 'image'}" class="w-4 h-4"></i>
+                            </button>
+                            <!-- 下載圖層 -->
+                            <button class="download-layer-btn p-1 text-slate-400 hover:text-slate-600 transition-colors" data-id="${layer.id}" title="下載此圖層 PNG">
+                                <i data-lucide="download" class="w-4 h-4"></i>
+                            </button>
+                            <!-- 顯示/隱藏 -->
+                            <button class="toggle-layer-btn p-1 ${layer.visible ? 'text-indigo-600' : 'text-slate-400'} hover:text-indigo-800 transition-colors" data-id="${layer.id}">
+                                <i data-lucide="${layer.visible ? 'eye' : 'eye-off'}" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                        ` : ''}
+                    </div>
+                    
+                    <!-- 🌟 合併選取模式下隱藏不透明度調節滑桿，讓界面聚焦在選取本身 -->
+                    ${!state.isMergeModeActive ? `
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[10px] font-medium text-slate-500">
+                            <span>圖層不透明度</span>
+                            <span class="opacity-value-display">${layer.opacity}%</span>
+                        </div>
+                        <input type="range" class="opacity-layer-slider w-full accent-indigo-600 h-1 cursor-pointer" min="0" max="100" value="${layer.opacity}" data-id="${layer.id}">
+                    </div>
+                    ` : ''}
+                `;
+
+                // 綁定圖層合併選取事件
+                if (state.isMergeModeActive) {
+                    const checkbox = item.querySelector('.layer-merge-checkbox');
+                    checkbox.addEventListener('change', (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        if (e.target.checked) {
+                            if (!state.selectedLayerIdsForMerge.includes(id)) {
+                                state.selectedLayerIdsForMerge.push(id);
+                            }
+                            item.classList.add('ring-2', 'ring-indigo-500', 'bg-indigo-50/10');
+                        } else {
+                            state.selectedLayerIdsForMerge = state.selectedLayerIdsForMerge.filter(lid => lid !== id);
+                            item.classList.remove('ring-2', 'ring-indigo-500', 'bg-indigo-50/10');
+                        }
+                        updateMergeActionBar();
+                    });
+                } else {
+                    // 綁定圖層重命名事件
+                    const nameInput = item.querySelector('.layer-name-input');
+                    const renameBtn = item.querySelector('.rename-trigger-btn');
+                    
+                    renameBtn.addEventListener('click', () => {
+                        nameInput.focus();
+                        nameInput.select();
+                    });
+
+                    nameInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            nameInput.blur();
+                        }
+                    });
+
+                    nameInput.addEventListener('change', (e) => {
+                        layer.name = e.target.value;
+                    });
+
+                    // 一鍵純色/原始紋理切換
+                    const solidToggleBtn = item.querySelector('.solid-toggle-btn');
+                    solidToggleBtn.addEventListener('click', () => {
+                        layer.renderAsSolid = !layer.renderAsSolid;
+                        renderLayersPanel();
+                        updateLayersRender();
+                    });
+
+                    const toggleBtn = item.querySelector('.toggle-layer-btn');
+                    toggleBtn.addEventListener('click', () => {
+                        layer.visible = !layer.visible;
+                        renderLayersPanel();
+                        updateLayersRender();
+                    });
+
+                    const opacitySlider = item.querySelector('.opacity-layer-slider');
+                    const opacityValSpan = item.querySelector('.opacity-value-display');
+                    opacitySlider.addEventListener('input', (e) => {
+                        layer.opacity = parseInt(e.target.value);
+                        if (opacityValSpan) {
+                            opacityValSpan.innerText = layer.opacity + '%';
+                        }
+                        updateLayersRender();
+                    });
+
+                    const downloadBtn = item.querySelector('.download-layer-btn');
+                    downloadBtn.addEventListener('click', () => {
+                        downloadSingleLayer(layer);
+                    });
+                }
+
+                el.layersListContainer.appendChild(item);
+            });
+
+            lucide.createIcons();
+        }
+
+        // ==================== 🌟 合併選取圖層控制邏輯 ====================
+        function toggleMergeMode() {
+            if (state.layers.length < 2) return;
+            state.isMergeModeActive = !state.isMergeModeActive;
+            
+            if (!state.isMergeModeActive) {
+                state.selectedLayerIdsForMerge = [];
+                el.mergeActionBar.classList.add('hidden');
+                el.toggleMergeModeBtn.classList.remove('bg-indigo-100', 'text-indigo-800', 'px-2', 'py-1', 'rounded-lg');
+            } else {
+                el.mergeActionBar.classList.remove('hidden');
+                el.toggleMergeModeBtn.classList.add('bg-indigo-100', 'text-indigo-800', 'px-2', 'py-1', 'rounded-lg');
+                updateMergeActionBar();
+            }
+            renderLayersPanel();
+        }
+
+        function updateMergeActionBar() {
+            const count = state.selectedLayerIdsForMerge.length;
+            el.selectedCount.innerText = count;
+            if (count >= 2) {
+                el.executeMergeBtn.removeAttribute('disabled');
+                el.executeMergeBtn.classList.replace('bg-indigo-400', 'bg-indigo-600');
+            } else {
+                el.executeMergeBtn.setAttribute('disabled', 'true');
+                el.executeMergeBtn.classList.replace('bg-indigo-600', 'bg-indigo-400');
+            }
+        }
+
+        function executeLayersMerge() {
+            if (state.selectedLayerIdsForMerge.length < 2) return;
+
+            let newLayerName = el.mergeLayerNameInput.value.trim();
+            if (!newLayerName) {
+                newLayerName = "自定義合併圖層";
+            }
+
+            // 1. 建立全新合併畫布
+            const mergedCanvas = document.createElement('canvas');
+            mergedCanvas.width = state.imageWidth;
+            mergedCanvas.height = state.imageHeight;
+            const mergedCtx = mergedCanvas.getContext('2d');
+
+            // 2. 獲取選取的圖層物件（為維持 Z-Index 疊加正確，依據在原 state.layers 中的先後順序進行繪製）
+            const selectedLayers = state.layers.filter(l => state.selectedLayerIdsForMerge.includes(l.id));
+            
+            selectedLayers.forEach(layer => {
+                // 將每個圖層的原始 canvas 的圖案繪製到新合併 canvas 上
+                mergedCtx.drawImage(layer.canvas, 0, 0);
+            });
+
+            // 3. 智慧計算合併圖層平均色，為卡片 Bubble 提供一個合適的色塊參考
+            let rSum = 0, gSum = 0, bSum = 0, validCount = 0;
+            selectedLayers.forEach(layer => {
+                if (layer.colorRGB) {
+                    rSum += layer.colorRGB.r;
+                    gSum += layer.colorRGB.g;
+                    bSum += layer.colorRGB.b;
+                    validCount++;
+                }
+            });
+            const avgR = validCount > 0 ? Math.round(rSum / validCount) : 128;
+            const avgG = validCount > 0 ? Math.round(gSum / validCount) : 128;
+            const avgB = validCount > 0 ? Math.round(bSum / validCount) : 128;
+            const avgHex = rgbToHex(avgR, avgG, avgB);
+
+            // 4. 定位第一張被選取圖層的位置，合併新圖層將在此位置插入，維持 Z-Index 合宜度
+            const insertIndex = state.layers.findIndex(l => l.id === selectedLayers[0].id);
+
+            // 5. 創建新自訂合併圖層物件
+            const newLayerId = 'layer-merged-' + Date.now();
+            const newLayer = {
+                id: newLayerId,
+                name: newLayerName,
+                color: avgHex,
+                colorRGB: { r: avgR, g: avgG, b: avgB },
+                opacity: 100,
+                visible: true,
+                renderAsSolid: false,
+                canvas: mergedCanvas,
+                ctx: mergedCtx
+            };
+
+            // 6. 清除被合併的原有舊圖層，並在正確位置插入新圖層
+            state.layers = state.layers.filter(l => !state.selectedLayerIdsForMerge.includes(l.id));
+            state.layers.splice(insertIndex, 0, newLayer);
+
+            // 7. 還原選取狀態並重新渲染
+            state.isMergeModeActive = false;
+            state.selectedLayerIdsForMerge = [];
+            el.mergeActionBar.classList.add('hidden');
+            el.toggleMergeModeBtn.classList.remove('bg-indigo-100', 'text-indigo-800', 'px-2', 'py-1', 'rounded-lg');
+            el.modalMerge.classList.add('opacity-0', 'pointer-events-none');
+
+            renderLayersPanel();
+            updateLayersRender();
+
+            el.canvasStatus.innerHTML = `<i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-500"></i> 圖層合併成功！已生成「${newLayerName}」`;
+            lucide.createIcons();
+        }
+
+        // 重設分解狀態
+        function resetDecomposition() {
+            state.layers = [];
+            state.isMergeModeActive = false;
+            state.selectedLayerIdsForMerge = [];
+            el.mergeActionBar.classList.add('hidden');
+            el.toggleMergeModeBtn.classList.remove('bg-indigo-100', 'text-indigo-800', 'px-2', 'py-1', 'rounded-lg');
+            el.layersRenderStack.innerHTML = '';
+            el.baseCanvas.style.opacity = '1.0';
+            renderLayersPanel();
+            el.downloadCompositeBtn.setAttribute('disabled', 'true');
+        }
+
+        // ==================== 手繪校正標註系統 ====================
+        function setDrawTool(tool) {
+            state.currentTool = tool;
+            if (tool === 'brush') {
+                el.toolBrush.className = "py-2.5 px-3 bg-indigo-50 border border-indigo-200 text-indigo-700 font-medium rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors";
+                el.toolEraser.className = "py-2.5 px-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors";
+            } else {
+                el.toolEraser.className = "py-2.5 px-3 bg-indigo-50 border border-indigo-200 text-indigo-700 font-medium rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors";
+                el.toolBrush.className = "py-2.5 px-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors";
+            }
+        }
+
+        function startDrawing(e) {
+            if (state.activeTab !== 'draw') return;
+            state.isDrawing = true;
+            
+            const drawCtx = el.drawingCanvas.getContext('2d');
+            const pos = getMousePosInCanvas(e);
+            
+            drawCtx.beginPath();
+            drawCtx.moveTo(pos.x, pos.y);
+            
+            if (state.currentTool === 'brush') {
+                drawCtx.globalCompositeOperation = 'source-over';
+                drawCtx.strokeStyle = state.brushColor;
+                drawCtx.lineWidth = state.brushSize;
+                drawCtx.lineCap = 'round';
+                drawCtx.lineJoin = 'round';
+                drawCtx.globalAlpha = state.brushOpacity;
+            } else {
+                drawCtx.globalCompositeOperation = 'destination-out';
+                drawCtx.lineWidth = state.brushSize * 1.5;
+                drawCtx.lineCap = 'round';
+                drawCtx.lineJoin = 'round';
+                drawCtx.globalAlpha = 1.0;
+            }
+        }
+
+        function draw(e) {
+            if (!state.isDrawing || state.activeTab !== 'draw') return;
+            const drawCtx = el.drawingCanvas.getContext('2d');
+            const pos = getMousePosInCanvas(e);
+            
+            drawCtx.lineTo(pos.x, pos.y);
+            drawCtx.stroke();
+        }
+
+        function stopDrawing() {
+            state.isDrawing = false;
+        }
+
+        function clearHandDrawing() {
+            const drawCtx = el.drawingCanvas.getContext('2d');
+            drawCtx.clearRect(0, 0, el.drawingCanvas.width, el.drawingCanvas.height);
+        }
+
+        // 轉換網頁滑鼠座標至 Canvas
+        function getMousePosInCanvas(e) {
+            const rect = el.drawingCanvas.getBoundingClientRect();
+            const scaleX = el.drawingCanvas.width / rect.width;
+            const scaleY = el.drawingCanvas.height / rect.height;
+            
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        // ==================== 吸管取色工具 ====================
+        function togglePipette() {
+            if (!state.imageLoaded) return;
+            state.isPipetteActive = !state.isPipetteActive;
+            
+            if (state.isPipetteActive) {
+                el.pipetteBtn.className = "flex-1 py-2 px-3 bg-amber-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 animate-pulse";
+                el.canvasViewport.style.cursor = 'cell';
+                el.baseCanvas.style.opacity = '1.0';
+                
+                el.drawingCanvas.addEventListener('click', handlePipetteClick);
+                el.canvasStatus.innerHTML = `<i data-lucide="pipette" class="w-3.5 h-3.5 text-amber-500"></i> 請在畫布上點擊想要分解的顏色...`;
+            } else {
+                disablePipette();
+            }
+            lucide.createIcons();
+        }
+
+        function disablePipette() {
+            state.isPipetteActive = false;
+            el.pipetteBtn.className = "flex-1 py-2 px-3 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-slate-50 transition-colors";
+            el.canvasViewport.style.cursor = 'grab';
+            el.drawingCanvas.removeEventListener('click', handlePipetteClick);
+            updateLayersRender();
+        }
+
+        function handlePipetteClick(e) {
+            const pos = getMousePosInCanvas(e);
+            const ctx = el.baseCanvas.getContext('2d');
+            const pixel = ctx.getImageData(pos.x, pos.y, 1, 1).data;
+            
+            const r = pixel[0];
+            const g = pixel[1];
+            const b = pixel[2];
+            const hex = rgbToHex(r, g, b);
+
+            const colorName = `自選：${getSophisticatedColorName(r, g, b)} (${hex})`;
+            
+            const isExist = state.selectedColorRGBs.some(c => {
+                const dist = getHSLColorDistance({ r, g, b }, c);
+                return dist < 25; // 判斷是否已經有非常相似的色調
+            });
+
+            if (!isExist) {
+                if (state.selectedColorRGBs.length >= 6) {
+                    state.selectedColorRGBs.shift();
+                }
+                state.selectedColorRGBs.push({ r, g, b, name: colorName });
+                
+                const newColorBtn = document.createElement('button');
+                newColorBtn.className = "w-6 h-6 rounded-full border border-slate-200";
+                newColorBtn.style.backgroundColor = hex;
+                newColorBtn.setAttribute('data-color', hex);
+                newColorBtn.addEventListener('click', (e) => {
+                    state.brushColor = hex;
+                    el.brushColor.value = hex;
+                });
+                el.presetColors.appendChild(newColorBtn);
+            }
+
+            disablePipette();
+            runMapDecomposition();
+        }
+
+        // ==================== 下載與專案儲存 ====================
+        function downloadCompositeResult() {
+            if (state.layers.length === 0) return;
+
+            const exportCanvas = document.createElement('canvas');
+            exportCanvas.width = state.imageWidth;
+            exportCanvas.height = state.imageHeight;
+            const exportCtx = exportCanvas.getContext('2d');
+
+            // 1. 原始底色
+            exportCtx.globalAlpha = 0.05;
+            exportCtx.drawImage(state.originalImage, 0, 0);
+            exportCtx.globalAlpha = 1.0;
+
+            // 2. 疊加圖層 (尊重當前純色/紋理設定)
+            state.layers.forEach(layer => {
+                if (!layer.visible) return;
+                exportCtx.globalAlpha = layer.opacity / 100;
+                
+                if (layer.renderAsSolid) {
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = state.imageWidth;
+                    tempCanvas.height = state.imageHeight;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.drawImage(layer.canvas, 0, 0);
+                    tempCtx.globalCompositeOperation = 'source-in';
+                    tempCtx.fillStyle = layer.color;
+                    tempCtx.fillRect(0, 0, state.imageWidth, state.imageHeight);
+                    
+                    exportCtx.drawImage(tempCanvas, 0, 0);
+                } else {
+                    exportCtx.drawImage(layer.canvas, 0, 0);
+                }
+            });
+
+            // 3. 疊加手繪
+            exportCtx.globalAlpha = 1.0;
+            exportCtx.drawImage(el.drawingCanvas, 0, 0);
+
+            const link = document.createElement('a');
+            link.download = `AI_Map_Composite_${Date.now()}.png`;
+            link.href = exportCanvas.toDataURL('image/png');
+            link.click();
+        }
+
+        // 下載單一特定圖層 PNG (尊重純色/紋理設定)
+        function downloadSingleLayer(layer) {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = state.imageWidth;
+            tempCanvas.height = state.imageHeight;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(layer.canvas, 0, 0);
+            
+            if (layer.renderAsSolid) {
+                tempCtx.globalCompositeOperation = 'source-in';
+                tempCtx.fillStyle = layer.color;
+                tempCtx.fillRect(0, 0, state.imageWidth, state.imageHeight);
+            }
+
+            const link = document.createElement('a');
+            link.download = `Layer_${layer.name.replace(/\s+/g, '_')}${layer.renderAsSolid ? '_solid' : ''}.png`;
+            link.href = tempCanvas.toDataURL('image/png');
+            link.click();
+        }
+
+        function saveProjectToLocal() {
+            if (!state.imageLoaded) return;
+            try {
+                const drawData = el.drawingCanvas.toDataURL('image/png');
+                localStorage.setItem('carto_splitter_annotation', drawData);
+                el.modalSaved.classList.remove('opacity-0', 'pointer-events-none');
+            } catch (err) {
+                console.error("儲存失敗：", err);
+            }
+        }
+
+        // ==================== 輔助工具函式 ====================
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // 更新進度顯示
+        function setProgress(percent, text) {
+            el.progressBar.style.width = `${percent}%`;
+            el.aiProgressText.innerText = `已完成: ${percent}% - ${text}`;
+        }
+
+        // 將 RGB 數值轉換為 Hex 字串
+        function rgbToHex(r, g, b) {
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+        }
+    </script>
+</body>
+</html>
