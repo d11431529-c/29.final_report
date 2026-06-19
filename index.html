@@ -252,8 +252,8 @@
         <!-- 下標題 -->
         <p class="sub-title">智慧地圖分解與色彩輔助系統</p>
 
-        <!-- 進入按鈕 (已修改連結為 AI.html) -->
-        <a href="AI.html" class="enter-btn" id="enterBtn">
+        <!-- 進入按鈕 (已修改連結為小寫 ai.html) -->
+        <a href="ai.html" class="enter-btn" id="enterBtn">
             進入系統
         </a>
 
@@ -265,21 +265,19 @@
 
     <script>
         document.getElementById('enterBtn').addEventListener('click', function(e) {
-            // 如果需要展示轉場動畫，可以先阻止預設行為，動畫播完後再跳轉
+            // 阻止預設行為以播放轉場動畫，隨後進行跳轉
             e.preventDefault();
             const targetUrl = this.getAttribute('href');
             const container = document.getElementById('mainContainer');
             
-            // 加入淡出效果
+            // 加入淡出縮放效果
             container.classList.add('fade-out');
             
             // 動畫結束後導向目標網頁
             setTimeout(() => {
                 window.location.href = targetUrl;
-            }, 600); // 這裡配合 CSS 中的動畫時間 0.6s
+            }, 600); // 配合 CSS 動態轉場時間 0.6s
         });
     </script>
-</body>
-</html>
 </body>
 </html>
